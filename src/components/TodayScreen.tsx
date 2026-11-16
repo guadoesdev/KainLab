@@ -1,9 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { sendEmailVerification, signOut, type User } from 'firebase/auth';
-import { LogOut, MailCheck, RefreshCw } from 'lucide-react';
+import {
+  BarChart3,
+  CalendarDays,
+  LogOut,
+  MailCheck,
+  RefreshCw,
+  UserCircle2,
+} from 'lucide-react';
 import { auth } from '../firebase';
 import {
   DEFAULT_DAILY_CALORIE_GOAL,
+  deriveDefaultMacroGoals,
   updateDailyCalorieGoal,
   type UserProfileRecord,
 } from '../lib/profileService';
@@ -13,9 +21,11 @@ import {
   clearChatMessagesInFirestore,
   createMealEntryInFirestore,
   deleteMealEntryInFirestore,
+  fetchSevenDayCalorieHistory,
   fetchTodayChatFromSupabase,
   fetchTodayMealsFromSupabase,
   generateRecordId,
+  getLast7DaysMeta,
   getTodayDateKey,
   saveChatMessageInFirestore,
   subscribeToTodayChat,
@@ -26,14 +36,20 @@ import {
 import { getStorageProvider, type StorageProvider } from '../lib/storageBackend';
 import type {
   ChatMessageItem,
+  DailyCaloriePoint,
   MealEntry,
   MealType,
   NutritionAnalysisResponse,
   NutritionTotals,
 } from '../types/nutrition';
+import { CalorieTrendChart } from './CalorieTrendChart';
 import { DailySummaryCard } from './DailySummaryCard';
 import { MealHistoryList } from './MealHistoryList';
 import { NutritionChatPanel } from './NutritionChatPanel';
+import { ProfilePage } from './ProfilePage';
+import { SummaryPage } from './SummaryPage';
+
+type AppTab = 'today' | 'summary' | 'profile';
 
 interface TodayScreenProps {
   user: User;
@@ -49,9 +65,13 @@ export function TodayScreen({
   onVerificationRefreshed,
 }: TodayScreenProps) {
   const dateKey = getTodayDateKey();
+  const [activeTab, setActiveTab] = useState<AppTab>('today');
   const [meals, setMeals] = useState<MealEntry[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessageItem[]>([]);
-  const [localCalorieGoal, setLocalCalorieGoal] = useState(DEFAULT_DAILY_CALORIE_GOAL);
+  const [localGoals, setLocalGoals] = useState(() => ({
+    dailyCalorieGoal: DEFAULT_DAILY_CALORIE_GOAL,
+    ...deriveDefaultMacroGoals(DEFAULT_DAILY_CALORIE_GOAL),
+  }));
   const [isSendingAi, setIsSendingAi] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -60,8 +80,21 @@ export function TodayScreen({
   const [verificationFeedback, setVerificationFeedback] = useState<string | null>(null);
 
   const [storageProvider, setStorageProvider] = useState<StorageProvider>('firestore');
+  const [historyTotalsByDate, setHistoryTotalsByDate] = useState<Record<string, number>>({});
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
-  const dailyCalorieGoal = profile?.dailyCalorieGoal ?? localCalorieGoal;
+  const last7DaysMeta = useMemo(() => getLast7DaysMeta(), [dateKey]);
+  const last7DateKeys = useMemo(
+    () => last7DaysMeta.map((d) => d.dateKey),
+    [last7DaysMeta]
+  );
+
+  const dailyCalorieGoal = profile?.dailyCalorieGoal ?? localGoals.dailyCalorieGoal;
+  const fallbackMacros = deriveDefaultMacroGoals(dailyCalorieGoal);
+  const proteinGoal = profile?.proteinGoal ?? localGoals.proteinGoal ?? fallbackMacros.proteinGoal;
+  const carbsGoal = profile?.carbsGoal ?? localGoals.carbsGoal ?? fallbackMacros.carbsGoal;
+  const fatGoal = profile?.fatGoal ?? localGoals.fatGoal ?? fallbackMacros.fatGoal;
 
   // Subscribe to Firestore or fetch initial Supabase state when user email is verified
   useEffect(() => {
@@ -113,6 +146,34 @@ export function TodayScreen({
     };
   }, [user, user.uid, user.emailVerified, dateKey]);
 
+  const loadSevenDayHistory = useCallback(async () => {
+    if (!user.emailVerified) {
+      setHistoryTotalsByDate({});
+      setHistoryError(null);
+      setIsHistoryLoading(false);
+      return;
+    }
+
+    setIsHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const totals = await fetchSevenDayCalorieHistory(user, last7DateKeys);
+      setHistoryTotalsByDate(totals);
+    } catch (error) {
+      setHistoryError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to load 7-day calorie trend.'
+      );
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  }, [user, last7DateKeys]);
+
+  useEffect(() => {
+    void loadSevenDayHistory();
+  }, [loadSevenDayHistory]);
+
   const dailyTotals: NutritionTotals = useMemo(() => {
     return meals.reduce<NutritionTotals>(
       (acc, meal) => ({
@@ -124,6 +185,18 @@ export function TodayScreen({
       { calories: 0, protein: 0, carbs: 0, fat: 0 }
     );
   }, [meals]);
+
+  const sevenDayPoints: DailyCaloriePoint[] = useMemo(() => {
+    return last7DaysMeta.map((day) => ({
+      dateKey: day.dateKey,
+      shortLabel: day.shortLabel,
+      fullLabel: day.fullLabel,
+      calories: day.isToday
+        ? dailyTotals.calories
+        : Math.max(0, Math.round(historyTotalsByDate[day.dateKey] ?? 0)),
+      isToday: day.isToday,
+    }));
+  }, [last7DaysMeta, historyTotalsByDate, dailyTotals.calories]);
 
   // Keep server GET /today-summary synchronized whenever meals or goal change
   useEffect(() => {
@@ -326,7 +399,7 @@ export function TodayScreen({
         onProfileUpdated({ ...profile, dailyCalorieGoal: saved });
       }
     } else {
-      setLocalCalorieGoal(nextGoal);
+      setLocalGoals((prev) => ({ ...prev, dailyCalorieGoal: nextGoal }));
     }
   }
 
@@ -384,23 +457,42 @@ export function TodayScreen({
     day: 'numeric',
   });
 
+  const navItems: Array<{ id: AppTab; label: string; icon: typeof CalendarDays }> = [
+    { id: 'today', label: 'Today', icon: CalendarDays },
+    { id: 'summary', label: 'Summary', icon: BarChart3 },
+    { id: 'profile', label: 'Profile', icon: UserCircle2 },
+  ];
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-      <header className="sticky top-0 z-30 h-14 border-b border-slate-200 bg-white/95 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-4">
-          <div className="flex items-baseline gap-3 min-w-0">
-            <h1 className="font-display text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0">
-              Today
-            </h1>
-            <span className="hidden sm:inline text-xs text-slate-500 whitespace-nowrap shrink-0">
-              AI Nutrition Tracker · {todayFormatted}
-            </span>
-          </div>
+      <header className="sticky top-0 z-30 h-12 sm:h-14 border-b border-slate-200 bg-white/95 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-8">
+          <h1 className="font-display text-base sm:text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0">
+            AI Nutrition Tracker
+          </h1>
+
+          <nav aria-label="Primary navigation" className="hidden sm:flex items-center gap-6">
+            {navItems.map((item) => {
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveTab(item.id)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`min-h-[40px] px-1 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 ${
+                    isActive
+                      ? 'border-emerald-700 text-emerald-800'
+                      : 'border-transparent text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
 
           <div className="flex items-center gap-3 shrink-0">
-            <span className="hidden md:inline text-xs text-slate-600 truncate max-w-[180px]">
-              {profile?.displayName || user.displayName || user.email}
-            </span>
             <button
               type="button"
               disabled={isSigningOut}
@@ -414,7 +506,7 @@ export function TodayScreen({
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-6 space-y-5">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 pt-5 pb-20 sm:py-6 space-y-5">
         {!user.emailVerified && (
           <div
             role="status"
@@ -455,33 +547,98 @@ export function TodayScreen({
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          <div className="lg:col-span-7 space-y-6">
-            <DailySummaryCard
-              totals={dailyTotals}
-              dailyCalorieGoal={dailyCalorieGoal}
-              mealCount={meals.length}
-              onUpdateCalorieGoal={handleUpdateGoal}
-            />
-            <MealHistoryList
-              meals={meals}
-              onUpdateMeal={handleUpdateMeal}
-              onDeleteMeal={handleDeleteMeal}
-            />
-          </div>
+        {activeTab === 'today' && (
+          <>
+            <div className="flex items-baseline justify-between gap-4">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Today</h2>
+              <span className="text-xs text-slate-500">{todayFormatted}</span>
+            </div>
 
-          <div className="lg:col-span-5">
-            <NutritionChatPanel
-              messages={chatMessages}
-              isSending={isSendingAi}
-              errorMessage={aiError}
-              onSendText={handleSendText}
-              onSendImage={handleSendImage}
-              onClearChat={handleClearChat}
-            />
-          </div>
-        </div>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              <div className="lg:col-span-7 space-y-6">
+                <DailySummaryCard
+                  totals={dailyTotals}
+                  dailyCalorieGoal={dailyCalorieGoal}
+                  proteinGoal={proteinGoal}
+                  carbsGoal={carbsGoal}
+                  fatGoal={fatGoal}
+                  mealCount={meals.length}
+                  onUpdateCalorieGoal={handleUpdateGoal}
+                />
+                <CalorieTrendChart
+                  points={sevenDayPoints}
+                  dailyCalorieGoal={dailyCalorieGoal}
+                  isLoading={isHistoryLoading}
+                  errorMessage={historyError}
+                  onRetry={() => void loadSevenDayHistory()}
+                />
+                <MealHistoryList
+                  meals={meals}
+                  onUpdateMeal={handleUpdateMeal}
+                  onDeleteMeal={handleDeleteMeal}
+                />
+              </div>
+
+              <div className="lg:col-span-5">
+                <NutritionChatPanel
+                  messages={chatMessages}
+                  isSending={isSendingAi}
+                  errorMessage={aiError}
+                  onSendText={handleSendText}
+                  onSendImage={handleSendImage}
+                  onClearChat={handleClearChat}
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {activeTab === 'summary' && (
+          <SummaryPage
+            user={user}
+            todayMeals={meals}
+            dailyCalorieGoal={dailyCalorieGoal}
+            proteinGoal={proteinGoal}
+            carbsGoal={carbsGoal}
+            fatGoal={fatGoal}
+          />
+        )}
+
+        {activeTab === 'profile' && (
+          <ProfilePage
+            user={user}
+            profile={profile}
+            localGoals={localGoals}
+            onProfileUpdated={onProfileUpdated}
+            onLocalGoalsUpdated={setLocalGoals}
+          />
+        )}
       </main>
+
+      {/* Mobile Bottom Tab Bar */}
+      <nav
+        aria-label="Mobile navigation"
+        className="sm:hidden fixed bottom-0 left-0 right-0 z-30 h-14 border-t border-slate-200 bg-white/95 backdrop-blur-md grid grid-cols-3 items-center"
+      >
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActiveTab(item.id)}
+              aria-current={isActive ? 'page' : undefined}
+              className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors ${
+                isActive ? 'text-emerald-800' : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Icon className="h-5 w-5" aria-hidden="true" />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }

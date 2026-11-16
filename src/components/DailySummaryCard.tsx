@@ -5,6 +5,9 @@ import type { NutritionTotals } from '../types/nutrition';
 interface DailySummaryCardProps {
   totals: NutritionTotals;
   dailyCalorieGoal: number;
+  proteinGoal?: number;
+  carbsGoal?: number;
+  fatGoal?: number;
   mealCount: number;
   onUpdateCalorieGoal: (nextGoal: number) => Promise<void>;
 }
@@ -12,6 +15,9 @@ interface DailySummaryCardProps {
 export function DailySummaryCard({
   totals,
   dailyCalorieGoal,
+  proteinGoal,
+  carbsGoal,
+  fatGoal,
   mealCount,
   onUpdateCalorieGoal,
 }: DailySummaryCardProps) {
@@ -27,10 +33,10 @@ export function DailySummaryCard({
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference * (1 - progressRatio);
 
-  // Reference macro targets derived proportionally from dailyCalorieGoal (30% protein, 45% carbs, 25% fat)
-  const proteinTarget = Math.max(40, Math.round((dailyCalorieGoal * 0.3) / 4));
-  const carbsTarget = Math.max(50, Math.round((dailyCalorieGoal * 0.45) / 4));
-  const fatTarget = Math.max(25, Math.round((dailyCalorieGoal * 0.25) / 9));
+  // Use custom macro goals from Profile when set, or proportional defaults (30% protein, 45% carbs, 25% fat)
+  const proteinTarget = proteinGoal ?? Math.max(40, Math.round((dailyCalorieGoal * 0.3) / 4));
+  const carbsTarget = carbsGoal ?? Math.max(50, Math.round((dailyCalorieGoal * 0.45) / 4));
+  const fatTarget = fatGoal ?? Math.max(25, Math.round((dailyCalorieGoal * 0.25) / 9));
 
   async function handleSaveGoal(event: FormEvent) {
     event.preventDefault();
@@ -223,7 +229,7 @@ export function DailySummaryCard({
                   />
                 </div>
                 <p className="font-mono text-[11px] text-slate-500 tabular-nums">
-                  /{macro.target}g ref
+                  /{macro.target}g goal
                 </p>
               </div>
             );

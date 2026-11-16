@@ -10,14 +10,17 @@ import {
   clearChatMessagesInSupabase,
   createMealInSupabase,
   deleteMealInSupabase,
+  getSevenDayCaloriesInSupabase,
   isSupabaseConfigured,
   listChatMessagesInSupabase,
   listMealsInSupabase,
+  listMealsRangeInSupabase,
   saveChatMessageInSupabase,
   SupabaseDailyLedgerRepository,
   syncProfileInSupabase,
   updateCalorieGoalInSupabase,
   updateMealInSupabase,
+  updateNutritionGoalsInSupabase,
 } from './server/repositories/supabaseNutritionRepository.ts';
 import { requireFirebaseJwt, type AuthenticatedRequest } from './server/middleware/auth.ts';
 import { createAiRateLimiter } from './server/middleware/rateLimit.ts';
@@ -160,6 +163,58 @@ async function startServer() {
     } catch (error) {
       res.status(500).json({
         error: error instanceof Error ? error.message : 'Unable to update calorie goal.',
+      });
+    }
+  });
+
+  app.patch('/api/profile/goals', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+    const uid = req.authUser?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    if (!useSupabase) {
+      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
+      return;
+    }
+    try {
+      const updated = await updateNutritionGoalsInSupabase(uid, {
+        displayName: typeof req.body?.displayName === 'string' ? req.body.displayName : undefined,
+        dailyCalorieGoal: Number(req.body?.dailyCalorieGoal ?? 2000),
+        proteinGoal: Number(req.body?.proteinGoal ?? 150),
+        carbsGoal: Number(req.body?.carbsGoal ?? 225),
+        fatGoal: Number(req.body?.fatGoal ?? 56),
+      });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Unable to update nutrition goals.',
+      });
+    }
+  });
+
+  app.get('/api/meals-range', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+    const uid = req.authUser?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    if (!useSupabase) {
+      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
+      return;
+    }
+    const startDateKey = typeof req.query?.startDateKey === 'string' ? req.query.startDateKey.trim() : '';
+    const endDateKey = typeof req.query?.endDateKey === 'string' ? req.query.endDateKey.trim() : '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDateKey) || !/^\d{4}-\d{2}-\d{2}$/.test(endDateKey)) {
+      res.status(400).json({ error: 'Provide valid startDateKey and endDateKey in YYYY-MM-DD format.' });
+      return;
+    }
+    try {
+      const meals = await listMealsRangeInSupabase(uid, startDateKey, endDateKey);
+      res.json({ meals });
+    } catch (error) {
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Unable to load meals range.',
       });
     }
   });
@@ -352,6 +407,39 @@ async function startServer() {
     } catch (error) {
       res.status(500).json({
         error: error instanceof Error ? error.message : 'Unable to clear chat messages.',
+      });
+    }
+  });
+
+  app.get('/api/calories-history', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+    const uid = req.authUser?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    if (!useSupabase) {
+      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
+      return;
+    }
+
+    const rawKeys = typeof req.query?.dateKeys === 'string' ? req.query.dateKeys : '';
+    const dateKeys = rawKeys
+      .split(',')
+      .map((k) => k.trim())
+      .filter((k) => /^\d{4}-\d{2}-\d{2}$/.test(k))
+      .slice(0, 14);
+
+    if (dateKeys.length === 0) {
+      res.status(400).json({ error: 'Provide at least one valid YYYY-MM-DD date key.' });
+      return;
+    }
+
+    try {
+      const totalsByDate = await getSevenDayCaloriesInSupabase(uid, dateKeys);
+      res.json({ totalsByDate });
+    } catch (error) {
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Unable to load calorie history.',
       });
     }
   });

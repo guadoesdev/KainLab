@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ChatMessageItem } from '../types/nutrition';
+import { CameraCaptureModal } from './CameraCaptureModal';
 
 interface NutritionChatPanelProps {
   messages: ChatMessageItem[];
@@ -93,6 +94,7 @@ export function NutritionChatPanel({
     file: File;
     previewUrl: string;
   } | null>(null);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [photoReadError, setPhotoReadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollBottomRef = useRef<HTMLDivElement | null>(null);
@@ -394,6 +396,20 @@ export function NutritionChatPanel({
             <ImagePlus className="h-5 w-5" aria-hidden="true" />
           </button>
 
+          <button
+            type="button"
+            disabled={isSending}
+            onClick={() => {
+              setPhotoReadError(null);
+              setIsCameraOpen(true);
+            }}
+            aria-label="Take food photo with camera"
+            title="Take food photo"
+            className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors disabled:opacity-50 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+          >
+            <Camera className="h-5 w-5" aria-hidden="true" />
+          </button>
+
           <input
             type="text"
             value={inputText}
@@ -423,6 +439,22 @@ export function NutritionChatPanel({
           </button>
         </div>
       </form>
+
+      {isCameraOpen && (
+        <CameraCaptureModal
+          onClose={() => setIsCameraOpen(false)}
+          onAttachPhoto={(file, previewUrl) => {
+            setPhotoReadError(null);
+            setPendingPhoto({ file, previewUrl });
+          }}
+          onSendPhotoNow={async (file, previewUrl) => {
+            const caption = inputText.trim() || undefined;
+            setInputText('');
+            setPendingPhoto(null);
+            await onSendImage(file, previewUrl, caption);
+          }}
+        />
+      )}
     </section>
   );
 }

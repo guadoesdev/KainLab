@@ -56,3 +56,11 @@ export interface NutritionAnalysisResponse {
   sources: string[];
   source: MealSource;
 }
+
+export interface DailyCaloriePoint {
+  dateKey: string;
+  shortLabel: string;
+  fullLabel: string;
+  calories: number;
+  isToday: boolean;
+}

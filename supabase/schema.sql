@@ -8,12 +8,23 @@ create table if not exists public.profiles (
   display_name text not null,
   daily_calorie_goal integer not null default 2000
     check (daily_calorie_goal >= 800 and daily_calorie_goal <= 10000),
+  protein_goal integer not null default 150
+    check (protein_goal >= 20 and protein_goal <= 500),
+  carbs_goal integer not null default 225
+    check (carbs_goal >= 20 and carbs_goal <= 1000),
+  fat_goal integer not null default 56
+    check (fat_goal >= 10 and fat_goal <= 400),
   photo_url text,
   provider text not null default 'password'
     check (provider in ('google.com', 'password')),
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.profiles
+  add column if not exists protein_goal integer not null default 150,
+  add column if not exists carbs_goal integer not null default 225,
+  add column if not exists fat_goal integer not null default 56;
 
 create table if not exists public.meals (
   id text primary key,

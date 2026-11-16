@@ -29,6 +29,18 @@
           "type": "number",
           "description": "Target daily calorie intake in kcal (800-10000)."
         },
+        "proteinGoal": {
+          "type": "number",
+          "description": "Target daily protein intake in grams (20-500)."
+        },
+        "carbsGoal": {
+          "type": "number",
+          "description": "Target daily carbohydrate intake in grams (20-1000)."
+        },
+        "fatGoal": {
+          "type": "number",
+          "description": "Target daily fat intake in grams (10-400)."
+        },
         "photoURL": {
           "type": "string",
           "maxLength": 500,

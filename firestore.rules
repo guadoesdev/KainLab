@@ -41,7 +41,7 @@ service cloud.firestore {
 
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'username', 'displayName', 'dailyCalorieGoal', 'provider', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'username', 'displayName', 'dailyCalorieGoal', 'photoURL', 'provider', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'username', 'displayName', 'dailyCalorieGoal', 'proteinGoal', 'carbsGoal', 'fatGoal', 'photoURL', 'provider', 'createdAt', 'updatedAt'])
         && isValidId(data.uid)
         && data.uid == request.auth.uid
         && isValidUsername(data.username)
@@ -51,6 +51,9 @@ service cloud.firestore {
         && data.dailyCalorieGoal is number
         && data.dailyCalorieGoal >= 800
         && data.dailyCalorieGoal <= 10000
+        && (!('proteinGoal' in data) || (data.proteinGoal is number && data.proteinGoal >= 20 && data.proteinGoal <= 500))
+        && (!('carbsGoal' in data) || (data.carbsGoal is number && data.carbsGoal >= 20 && data.carbsGoal <= 1000))
+        && (!('fatGoal' in data) || (data.fatGoal is number && data.fatGoal >= 10 && data.fatGoal <= 400))
         && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
         && data.provider is string
         && data.provider in ['google.com', 'password']
@@ -179,7 +182,7 @@ service cloud.firestore {
         && incoming().provider == existing().provider
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'displayName', 'dailyCalorieGoal', 'photoURL', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'displayName', 'dailyCalorieGoal', 'proteinGoal', 'carbsGoal', 'fatGoal', 'photoURL', 'updatedAt']);
 
       allow delete: if false;
 

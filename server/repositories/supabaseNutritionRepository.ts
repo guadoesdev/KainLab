@@ -12,6 +12,9 @@ export interface SupabaseProfileRecord {
   username: string;
   displayName: string;
   dailyCalorieGoal: number;
+  proteinGoal: number;
+  carbsGoal: number;
+  fatGoal: number;
   photoURL?: string;
   provider: 'google.com' | 'password';
 }
@@ -216,7 +219,9 @@ export async function syncProfileInSupabase(params: {
   const supabase = getSupabaseClient();
   const { data: existing, error: fetchError } = await supabase
     .from('profiles')
-    .select('uid, username, display_name, daily_calorie_goal, photo_url, provider')
+    .select(
+      'uid, username, display_name, daily_calorie_goal, protein_goal, carbs_goal, fat_goal, photo_url, provider'
+    )
     .eq('uid', params.uid)
     .maybeSingle();
 
@@ -225,11 +230,15 @@ export async function syncProfileInSupabase(params: {
   }
 
   if (existing) {
+    const calGoal = Number(existing.daily_calorie_goal ?? 2000);
     return {
       uid: existing.uid,
       username: existing.username,
       displayName: existing.display_name,
-      dailyCalorieGoal: Number(existing.daily_calorie_goal ?? 2000),
+      dailyCalorieGoal: calGoal,
+      proteinGoal: Number(existing.protein_goal ?? Math.round((calGoal * 0.3) / 4)),
+      carbsGoal: Number(existing.carbs_goal ?? Math.round((calGoal * 0.45) / 4)),
+      fatGoal: Number(existing.fat_goal ?? Math.round((calGoal * 0.25) / 9)),
       photoURL: existing.photo_url ?? undefined,
       provider: existing.provider === 'google.com' ? 'google.com' : 'password',
     };
@@ -266,12 +275,17 @@ export async function syncProfileInSupabase(params: {
         username: candidateUsername,
         display_name: displayName || candidateUsername,
         daily_calorie_goal: 2000,
+        protein_goal: 150,
+        carbs_goal: 225,
+        fat_goal: 56,
         photo_url: params.photoURL ? params.photoURL.slice(0, 500) : null,
         provider,
       },
       { onConflict: 'uid' }
     )
-    .select('uid, username, display_name, daily_calorie_goal, photo_url, provider')
+    .select(
+      'uid, username, display_name, daily_calorie_goal, protein_goal, carbs_goal, fat_goal, photo_url, provider'
+    )
     .single();
 
   if (insertError || !inserted) {
@@ -283,6 +297,9 @@ export async function syncProfileInSupabase(params: {
     username: inserted.username,
     displayName: inserted.display_name,
     dailyCalorieGoal: Number(inserted.daily_calorie_goal ?? 2000),
+    proteinGoal: Number(inserted.protein_goal ?? 150),
+    carbsGoal: Number(inserted.carbs_goal ?? 225),
+    fatGoal: Number(inserted.fat_goal ?? 56),
     photoURL: inserted.photo_url ?? undefined,
     provider: inserted.provider === 'google.com' ? 'google.com' : 'password',
   };
@@ -303,6 +320,60 @@ export async function updateCalorieGoalInSupabase(uid: string, nextGoal: number)
     throw new Error(`Failed to update daily calorie goal: ${error.message}`);
   }
   return clamped;
+}
+
+export async function updateNutritionGoalsInSupabase(
+  uid: string,
+  goals: {
+    displayName?: string;
+    dailyCalorieGoal: number;
+    proteinGoal: number;
+    carbsGoal: number;
+    fatGoal: number;
+  }
+): Promise<{
+  displayName?: string;
+  dailyCalorieGoal: number;
+  proteinGoal: number;
+  carbsGoal: number;
+  fatGoal: number;
+}> {
+  const supabase = getSupabaseClient();
+  const dailyCalorieGoal = Math.min(10000, Math.max(800, Math.round(goals.dailyCalorieGoal)));
+  const proteinGoal = Math.min(500, Math.max(20, Math.round(goals.proteinGoal)));
+  const carbsGoal = Math.min(1000, Math.max(20, Math.round(goals.carbsGoal)));
+  const fatGoal = Math.min(400, Math.max(10, Math.round(goals.fatGoal)));
+
+  const updatePayload: Record<string, unknown> = {
+    daily_calorie_goal: dailyCalorieGoal,
+    protein_goal: proteinGoal,
+    carbs_goal: carbsGoal,
+    fat_goal: fatGoal,
+    updated_at: new Date().toISOString(),
+  };
+
+  let sanitizedDisplayName: string | undefined;
+  if (typeof goals.displayName === 'string' && goals.displayName.trim()) {
+    sanitizedDisplayName = goals.displayName.trim().slice(0, 80);
+    updatePayload.display_name = sanitizedDisplayName;
+  }
+
+  const { error } = await supabase
+    .from('profiles')
+    .update(updatePayload)
+    .eq('uid', uid);
+
+  if (error) {
+    throw new Error(`Failed to update nutrition goals: ${error.message}`);
+  }
+
+  return {
+    displayName: sanitizedDisplayName,
+    dailyCalorieGoal,
+    proteinGoal,
+    carbsGoal,
+    fatGoal,
+  };
 }
 
 export async function listMealsInSupabase(
@@ -592,4 +663,77 @@ export async function clearChatMessagesInSupabase(
   if (error) {
     throw new Error(`Failed to clear chat history in Supabase: ${error.message}`);
   }
+}
+
+export async function getSevenDayCaloriesInSupabase(
+  userId: string,
+  dateKeys: string[]
+): Promise<Record<string, number>> {
+  const totals: Record<string, number> = {};
+  for (const key of dateKeys) {
+    totals[key] = 0;
+  }
+  if (dateKeys.length === 0) {
+    return totals;
+  }
+
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('meals')
+    .select('date_key, calories')
+    .eq('user_id', userId)
+    .in('date_key', dateKeys);
+
+  if (error) {
+    throw new Error(`Failed to load 7-day calorie history from Supabase: ${error.message}`);
+  }
+
+  for (const row of data || []) {
+    const key = String(row.date_key || '');
+    if (key in totals) {
+      totals[key] += Number(row.calories ?? 0);
+    }
+  }
+
+  return totals;
+}
+
+export async function listMealsRangeInSupabase(
+  userId: string,
+  startDateKey: string,
+  endDateKey: string
+): Promise<SupabaseMealRecord[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('meals')
+    .select(
+      'id, user_id, date_key, meal_type, foods, portions, calories, protein, carbs, fat, confidence, source, sources, created_at, updated_at'
+    )
+    .eq('user_id', userId)
+    .gte('date_key', startDateKey)
+    .lte('date_key', endDateKey)
+    .order('date_key', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to load meals range from Supabase: ${error.message}`);
+  }
+
+  return (data || []).map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    dateKey: row.date_key,
+    mealType: row.meal_type as MealType,
+    foods: Array.isArray(row.foods) ? row.foods : [],
+    portions: String(row.portions ?? ''),
+    calories: Number(row.calories ?? 0),
+    protein: Number(row.protein ?? 0),
+    carbs: Number(row.carbs ?? 0),
+    fat: Number(row.fat ?? 0),
+    confidence: Number(row.confidence ?? 0.9),
+    source: row.source === 'image' ? 'image' : 'text',
+    sources: Array.isArray(row.sources) ? row.sources : [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
 }

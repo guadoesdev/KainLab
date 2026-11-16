@@ -3,6 +3,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -22,12 +23,146 @@ import type {
   NutritionTotals,
 } from '../types/nutrition';
 
-export function getTodayDateKey(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
+export function formatDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+export function getTodayDateKey(): string {
+  return formatDateKey(new Date());
+}
+
+export interface DayMeta {
+  dateKey: string;
+  shortLabel: string;
+  fullLabel: string;
+  isToday: boolean;
+}
+
+export function getLast7DaysMeta(): DayMeta[] {
+  const now = new Date();
+  const days: DayMeta[] = [];
+
+  for (let offset = 6; offset >= 0; offset -= 1) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset);
+    const isToday = offset === 0;
+    days.push({
+      dateKey: formatDateKey(d),
+      shortLabel: isToday
+        ? 'Today'
+        : d.toLocaleDateString(undefined, { weekday: 'short' }),
+      fullLabel: d.toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      }),
+      isToday,
+    });
+  }
+
+  return days;
+}
+
+export async function fetchSevenDayCalorieHistory(
+  user: User,
+  dateKeys: string[]
+): Promise<Record<string, number>> {
+  const totals: Record<string, number> = {};
+  for (const key of dateKeys) {
+    totals[key] = 0;
+  }
+  if (dateKeys.length === 0) {
+    return totals;
+  }
+
+  if ((await getStorageProvider()) === 'supabase') {
+    const token = await user.getIdToken();
+    const response = await fetch(
+      `/api/calories-history?dateKeys=${encodeURIComponent(dateKeys.join(','))}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof data?.error === 'string'
+          ? data.error
+          : 'Unable to load 7-day calorie history.'
+      );
+    }
+    const serverTotals =
+      data?.totalsByDate && typeof data.totalsByDate === 'object'
+        ? (data.totalsByDate as Record<string, unknown>)
+        : {};
+    for (const key of dateKeys) {
+      totals[key] = Math.max(0, Math.round(Number(serverTotals[key] ?? 0)));
+    }
+    return totals;
+  }
+
+  const path = `users/${user.uid}/meals`;
+  const historyQuery = query(
+    collection(db, 'users', user.uid, 'meals'),
+    where('dateKey', 'in', dateKeys.slice(0, 10))
+  );
+
+  try {
+    const snapshot = await getDocs(historyQuery);
+    for (const docSnap of snapshot.docs) {
+      const meal = docSnap.data() as Partial<MealEntry>;
+      if (meal.dateKey && meal.dateKey in totals) {
+        totals[meal.dateKey] += Math.max(0, Number(meal.calories) || 0);
+      }
+    }
+    return totals;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function fetchMealsInDateRange(
+  user: User,
+  startDateKey: string,
+  endDateKey: string
+): Promise<MealEntry[]> {
+  if ((await getStorageProvider()) === 'supabase') {
+    const token = await user.getIdToken();
+    const response = await fetch(
+      `/api/meals-range?startDateKey=${encodeURIComponent(startDateKey)}&endDateKey=${encodeURIComponent(endDateKey)}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof data?.error === 'string' ? data.error : 'Unable to load meal summary range.'
+      );
+    }
+    const rows = Array.isArray(data?.meals) ? data.meals : [];
+    return rows.map((row: MealEntry & { createdAt?: string; updatedAt?: string }) => ({
+      ...row,
+      createdAt: row.createdAt ? new Date(row.createdAt) : new Date(),
+      updatedAt: row.updatedAt ? new Date(row.updatedAt) : new Date(),
+    }));
+  }
+
+  const path = `users/${user.uid}/meals`;
+  const rangeQuery = query(
+    collection(db, 'users', user.uid, 'meals'),
+    where('dateKey', '>=', startDateKey),
+    where('dateKey', '<=', endDateKey)
+  );
+
+  try {
+    const snapshot = await getDocs(rangeQuery);
+    return snapshot.docs.map((docSnap) => docSnap.data() as MealEntry);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
 }
 
 export function generateRecordId(prefix: string): string {

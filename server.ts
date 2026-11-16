@@ -1,0 +1,294 @@
+import 'dotenv/config';
+import express, { type Request, type Response } from 'express';
+import multer from 'multer';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { GeminiNutritionProvider } from './server/ai/geminiNutritionProvider.ts';
+import { NutritionService } from './server/services/nutritionService.ts';
+import { InMemoryDailyLedgerRepository } from './server/repositories/mealRepository.ts';
+import { requireFirebaseJwt, type AuthenticatedRequest } from './server/middleware/auth.ts';
+import { createAiRateLimiter } from './server/middleware/rateLimit.ts';
+import type { ChatHistoryTurn } from './server/types/nutrition.ts';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PORT = Number(process.env.PORT) || 3000;
+const ALLOWED_IMAGE_MIMES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+]);
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 8 * 1024 * 1024, // 8 MB max upload
+  },
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_IMAGE_MIMES.has(file.mimetype.toLowerCase())) {
+      cb(null, true);
+    } else {
+      cb(new Error('Unsupported image format. Please upload JPEG, PNG, or WebP.'));
+    }
+  },
+});
+
+const mealRepository = new InMemoryDailyLedgerRepository();
+
+function getNutritionService(): NutritionService {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured in server environment.');
+  }
+  const provider = new GeminiNutritionProvider(apiKey);
+  return new NutritionService(provider);
+}
+
+function getLocalDateKey(inputDateKey?: unknown): string {
+  if (typeof inputDateKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(inputDateKey)) {
+    return inputDateKey;
+  }
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function sanitizeHistory(raw: unknown): ChatHistoryTurn[] {
+  if (!Array.isArray(raw)) return [];
+  const turns: ChatHistoryTurn[] = [];
+  for (const item of raw.slice(-8)) {
+    if (
+      typeof item === 'object' &&
+      item !== null &&
+      'role' in item &&
+      'content' in item &&
+      (item.role === 'user' || item.role === 'assistant') &&
+      typeof item.content === 'string'
+    ) {
+      turns.push({
+        role: item.role,
+        content: item.content.slice(0, 1000),
+      });
+    }
+  }
+  return turns;
+}
+
+async function startServer() {
+  const app = express();
+  app.use(express.json({ limit: '10mb' }));
+
+  const aiRateLimiter = createAiRateLimiter({
+    windowMs: 60 * 1000,
+    maxRequests: 25,
+  });
+
+  app.get('/api/health', (_req: Request, res: Response) => {
+    res.json({ status: 'ok', service: 'ai-nutrition-tracker', timestamp: new Date().toISOString() });
+  });
+
+  const handleChat = async (req: AuthenticatedRequest, res: Response) => {
+    const uid = req.authUser?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    if (!message || message.length > 2000) {
+      res.status(400).json({ error: 'Message must be between 1 and 2000 characters.' });
+      return;
+    }
+
+    const history = sanitizeHistory(req.body?.history);
+    const currentTimeIso =
+      typeof req.body?.currentTimeIso === 'string'
+        ? req.body.currentTimeIso
+        : new Date().toISOString();
+    const dateKey = getLocalDateKey(req.body?.dateKey);
+
+    try {
+      const nutritionService = getNutritionService();
+      const result = await nutritionService.processTextMeal(message, history, currentTimeIso);
+
+      if (result.meal_logged) {
+        await mealRepository.addMealTotals(uid, dateKey, result.nutrition);
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error('Chat meal analysis failed:', error);
+      res.status(502).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Unable to analyze meal right now. Please try again.',
+      });
+    }
+  };
+
+  app.post('/api/chat', requireFirebaseJwt, aiRateLimiter, handleChat);
+  app.post('/chat', requireFirebaseJwt, aiRateLimiter, handleChat);
+
+  const handleAnalyzeImage = async (req: AuthenticatedRequest, res: Response) => {
+    const uid = req.authUser?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    let imageBase64 = '';
+    let mimeType = 'image/jpeg';
+
+    if (req.file) {
+      imageBase64 = req.file.buffer.toString('base64');
+      mimeType = req.file.mimetype;
+    } else if (typeof req.body?.imageBase64 === 'string') {
+      const rawData = req.body.imageBase64.trim();
+      const dataUrlMatch = rawData.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (dataUrlMatch) {
+        mimeType = dataUrlMatch[1];
+        imageBase64 = dataUrlMatch[2];
+      } else {
+        imageBase64 = rawData;
+        if (typeof req.body?.mimeType === 'string') {
+          mimeType = req.body.mimeType;
+        }
+      }
+    }
+
+    if (!imageBase64) {
+      res.status(400).json({ error: 'Please attach a food image for analysis.' });
+      return;
+    }
+
+    if (!ALLOWED_IMAGE_MIMES.has(mimeType.toLowerCase())) {
+      res.status(400).json({ error: 'Unsupported image format. Use JPEG, PNG, or WebP.' });
+      return;
+    }
+
+    let history: ChatHistoryTurn[] = [];
+    if (typeof req.body?.history === 'string') {
+      try {
+        history = sanitizeHistory(JSON.parse(req.body.history));
+      } catch {
+        history = [];
+      }
+    } else {
+      history = sanitizeHistory(req.body?.history);
+    }
+
+    const caption =
+      typeof req.body?.caption === 'string' ? req.body.caption.trim().slice(0, 500) : undefined;
+    const currentTimeIso =
+      typeof req.body?.currentTimeIso === 'string'
+        ? req.body.currentTimeIso
+        : new Date().toISOString();
+    const dateKey = getLocalDateKey(req.body?.dateKey);
+
+    try {
+      const nutritionService = getNutritionService();
+      const result = await nutritionService.processImageMeal(
+        imageBase64,
+        mimeType,
+        caption,
+        history,
+        currentTimeIso
+      );
+
+      if (result.meal_logged) {
+        await mealRepository.addMealTotals(uid, dateKey, result.nutrition);
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error('Image meal analysis failed:', error);
+      res.status(502).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Unable to analyze this photo right now. Please try again.',
+      });
+    }
+  };
+
+  app.post(
+    '/api/analyze-image',
+    requireFirebaseJwt,
+    aiRateLimiter,
+    upload.single('image'),
+    handleAnalyzeImage
+  );
+  app.post(
+    '/analyze-image',
+    requireFirebaseJwt,
+    aiRateLimiter,
+    upload.single('image'),
+    handleAnalyzeImage
+  );
+
+  const handleGetSummary = async (req: AuthenticatedRequest, res: Response) => {
+    const uid = req.authUser?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const dateKey = getLocalDateKey(req.query?.dateKey);
+    const summary = await mealRepository.getTodaySummary(uid, dateKey);
+    res.json(summary);
+  };
+
+  app.get('/api/today-summary', requireFirebaseJwt, handleGetSummary);
+  app.get('/today-summary', requireFirebaseJwt, handleGetSummary);
+
+  app.post('/api/today-summary/sync', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+    const uid = req.authUser?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const dateKey = getLocalDateKey(req.body?.dateKey);
+    const summary = await mealRepository.replaceDailySummary(
+      uid,
+      dateKey,
+      {
+        calories: Number(req.body?.calories ?? 0),
+        protein: Number(req.body?.protein ?? 0),
+        carbs: Number(req.body?.carbs ?? 0),
+        fat: Number(req.body?.fat ?? 0),
+      },
+      Number(req.body?.daily_calorie_goal ?? 2000)
+    );
+    res.json(summary);
+  });
+
+  if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distDir = path.resolve(__dirname, 'dist');
+    app.use(express.static(distDir));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(distDir, 'index.html'));
+    });
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`AI Nutrition Tracker server running on http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error('Failed to start server:', error);
+  process.exit(1);
+});

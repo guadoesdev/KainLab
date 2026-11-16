@@ -148,70 +148,93 @@ export function loadRememberedLogin(): string {
 
 export interface FriendlyAuthError {
   message: string;
-  needsEmailProviderSetup: boolean;
+  needsProviderSetup: boolean;
 }
 
-export function mapFirebaseAuthError(error: unknown): FriendlyAuthError {
+export function mapSupabaseAuthError(error: unknown): FriendlyAuthError {
+  const rawMessage =
+    typeof error === 'object' && error !== null && 'message' in error
+      ? String((error as { message: unknown }).message)
+      : error instanceof Error
+        ? error.message
+        : '';
   const code =
     typeof error === 'object' && error !== null && 'code' in error
-      ? String((error as { code: unknown }).code)
+      ? String((error as { code: unknown }).code).toLowerCase()
       : '';
+  const lower = rawMessage.toLowerCase();
 
-  switch (code) {
-    case 'auth/operation-not-allowed':
-      return {
-        message: 'Email and password authentication is not enabled yet for this Firebase project.',
-        needsEmailProviderSetup: true,
-      };
-    case 'auth/invalid-credential':
-    case 'auth/wrong-password':
-    case 'auth/user-not-found':
-      return {
-        message: 'The username, email, or password you entered is incorrect.',
-        needsEmailProviderSetup: false,
-      };
-    case 'auth/email-already-in-use':
-      return {
-        message: 'An account with this email address already exists. Try signing in instead.',
-        needsEmailProviderSetup: false,
-      };
-    case 'auth/weak-password':
-      return {
-        message: 'Choose a stronger password with at least 8 characters.',
-        needsEmailProviderSetup: false,
-      };
-    case 'auth/invalid-email':
-      return {
-        message: 'Please enter a valid email address.',
-        needsEmailProviderSetup: false,
-      };
-    case 'auth/popup-closed-by-user':
-      return {
-        message: 'Google sign-in was cancelled before completion.',
-        needsEmailProviderSetup: false,
-      };
-    case 'auth/popup-blocked':
-      return {
-        message: 'Your browser blocked the Google sign-in window. Allow popups for this site and try again.',
-        needsEmailProviderSetup: false,
-      };
-    case 'auth/too-many-requests':
-      return {
-        message: 'Too many consecutive attempts. Please wait a moment and try again.',
-        needsEmailProviderSetup: false,
-      };
-    case 'auth/network-request-failed':
-      return {
-        message: 'Network connection error. Check your connection and try again.',
-        needsEmailProviderSetup: false,
-      };
-    default:
-      return {
-        message:
-          error instanceof Error && error.message
-            ? error.message
-            : 'Unable to complete authentication. Please try again.',
-        needsEmailProviderSetup: false,
-      };
+  if (
+    code === 'provider_disabled' ||
+    lower.includes('provider is not enabled') ||
+    lower.includes('unsupported provider') ||
+    code === 'email_provider_disabled' ||
+    code === 'signup_disabled'
+  ) {
+    return {
+      message: 'This sign-in provider is not enabled yet in your Supabase project.',
+      needsProviderSetup: true,
+    };
   }
+
+  if (
+    code === 'invalid_credentials' ||
+    lower.includes('invalid login credentials') ||
+    lower.includes('invalid email or password')
+  ) {
+    return {
+      message: 'The username, email, or password you entered is incorrect.',
+      needsProviderSetup: false,
+    };
+  }
+
+  if (code === 'email_not_confirmed' || lower.includes('email not confirmed')) {
+    return {
+      message: 'Please confirm your email address using the link sent to your inbox before signing in.',
+      needsProviderSetup: false,
+    };
+  }
+
+  if (
+    code === 'user_already_exists' ||
+    code === 'email_exists' ||
+    lower.includes('already registered') ||
+    lower.includes('already exists')
+  ) {
+    return {
+      message: 'An account with this email address already exists. Try signing in instead.',
+      needsProviderSetup: false,
+    };
+  }
+
+  if (code === 'weak_password' || lower.includes('password should be')) {
+    return {
+      message: 'Choose a stronger password with at least 8 characters.',
+      needsProviderSetup: false,
+    };
+  }
+
+  if (
+    code === 'over_email_send_rate_limit' ||
+    code === 'over_request_rate_limit' ||
+    lower.includes('rate limit') ||
+    lower.includes('too many requests')
+  ) {
+    return {
+      message: 'Too many consecutive attempts. Please wait a moment and try again.',
+      needsProviderSetup: false,
+    };
+  }
+
+  if (lower.includes('failed to fetch') || lower.includes('network')) {
+    return {
+      message: 'Network connection error. Check your connection and try again.',
+      needsProviderSetup: false,
+    };
+  }
+
+  return {
+    message: rawMessage || 'Unable to complete authentication. Please try again.',
+    needsProviderSetup: false,
+  };
 }

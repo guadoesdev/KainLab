@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { User } from 'firebase/auth';
+import type { AppAuthUser } from '../lib/supabaseAuth';
 import {
   AlertCircle,
   ChevronLeft,
@@ -16,7 +16,7 @@ import type { MealEntry, MealType, NutritionTotals } from '../types/nutrition';
 type SummaryPeriod = 'day' | 'week' | 'month';
 
 interface SummaryPageProps {
-  user: User;
+  user: AppAuthUser;
   todayMeals: MealEntry[];
   dailyCalorieGoal: number;
   proteinGoal: number;

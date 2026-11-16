@@ -22,7 +22,25 @@ import {
   updateMealInSupabase,
   updateNutritionGoalsInSupabase,
 } from './server/repositories/supabaseNutritionRepository.ts';
-import { requireFirebaseJwt, type AuthenticatedRequest } from './server/middleware/auth.ts';
+import {
+  clearChatMessagesInMemory,
+  createMealInMemory,
+  deleteMealInMemory,
+  getSevenDayCaloriesInMemory,
+  listChatMessagesInMemory,
+  listMealsInMemory,
+  listMealsRangeInMemory,
+  saveChatMessageInMemory,
+  syncProfileInMemory,
+  updateCalorieGoalInMemory,
+  updateMealInMemory,
+  updateNutritionGoalsInMemory,
+} from './server/repositories/memoryNutritionStore.ts';
+import {
+  getSupabasePublicConfig,
+  requireSupabaseJwt,
+  type AuthenticatedRequest,
+} from './server/middleware/auth.ts';
 import { createAiRateLimiter } from './server/middleware/rateLimit.ts';
 import type { ChatHistoryTurn, MealSource, MealType } from './server/types/nutrition.ts';
 
@@ -113,30 +131,38 @@ async function startServer() {
     res.json({ status: 'ok', service: 'ai-nutrition-tracker', timestamp: new Date().toISOString() });
   });
 
-  app.get('/api/config/storage', (_req: Request, res: Response) => {
-    res.json({ provider: useSupabase ? 'supabase' : 'firestore' });
+  app.get('/api/config/auth', (_req: Request, res: Response) => {
+    res.json({
+      provider: 'supabase',
+      ...getSupabasePublicConfig(),
+    });
   });
 
-  app.post('/api/profile/sync', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/config/storage', (_req: Request, res: Response) => {
+    res.json({ provider: useSupabase ? 'supabase' : 'memory' });
+  });
+
+  app.post('/api/profile/sync', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
-      return;
-    }
+    const payload = {
+      uid,
+      email: req.authUser?.email || (typeof req.body?.email === 'string' ? req.body.email : undefined),
+      displayName: typeof req.body?.displayName === 'string' ? req.body.displayName : undefined,
+      photoURL: typeof req.body?.photoURL === 'string' ? req.body.photoURL : undefined,
+      provider: (req.body?.provider === 'google.com' ? 'google.com' : 'password') as
+        | 'google.com'
+        | 'password',
+      preferredUsername:
+        typeof req.body?.preferredUsername === 'string' ? req.body.preferredUsername : undefined,
+    };
     try {
-      const profile = await syncProfileInSupabase({
-        uid,
-        email: req.authUser?.email || (typeof req.body?.email === 'string' ? req.body.email : undefined),
-        displayName: typeof req.body?.displayName === 'string' ? req.body.displayName : undefined,
-        photoURL: typeof req.body?.photoURL === 'string' ? req.body.photoURL : undefined,
-        provider: req.body?.provider === 'google.com' ? 'google.com' : 'password',
-        preferredUsername:
-          typeof req.body?.preferredUsername === 'string' ? req.body.preferredUsername : undefined,
-      });
+      const profile = useSupabase
+        ? await syncProfileInSupabase(payload)
+        : syncProfileInMemory(payload);
       res.json(profile);
     } catch (error) {
       res.status(500).json({
@@ -145,21 +171,17 @@ async function startServer() {
     }
   });
 
-  app.patch('/api/profile/goal', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/profile/goal', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
-      return;
-    }
+    const goal = Number(req.body?.dailyCalorieGoal ?? 2000);
     try {
-      const dailyCalorieGoal = await updateCalorieGoalInSupabase(
-        uid,
-        Number(req.body?.dailyCalorieGoal ?? 2000)
-      );
+      const dailyCalorieGoal = useSupabase
+        ? await updateCalorieGoalInSupabase(uid, goal)
+        : updateCalorieGoalInMemory(uid, goal);
       res.json({ dailyCalorieGoal });
     } catch (error) {
       res.status(500).json({
@@ -168,24 +190,23 @@ async function startServer() {
     }
   });
 
-  app.patch('/api/profile/goals', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/profile/goals', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
-      return;
-    }
+    const goalsPayload = {
+      displayName: typeof req.body?.displayName === 'string' ? req.body.displayName : undefined,
+      dailyCalorieGoal: Number(req.body?.dailyCalorieGoal ?? 2000),
+      proteinGoal: Number(req.body?.proteinGoal ?? 150),
+      carbsGoal: Number(req.body?.carbsGoal ?? 225),
+      fatGoal: Number(req.body?.fatGoal ?? 56),
+    };
     try {
-      const updated = await updateNutritionGoalsInSupabase(uid, {
-        displayName: typeof req.body?.displayName === 'string' ? req.body.displayName : undefined,
-        dailyCalorieGoal: Number(req.body?.dailyCalorieGoal ?? 2000),
-        proteinGoal: Number(req.body?.proteinGoal ?? 150),
-        carbsGoal: Number(req.body?.carbsGoal ?? 225),
-        fatGoal: Number(req.body?.fatGoal ?? 56),
-      });
+      const updated = useSupabase
+        ? await updateNutritionGoalsInSupabase(uid, goalsPayload)
+        : updateNutritionGoalsInMemory(uid, goalsPayload);
       res.json(updated);
     } catch (error) {
       res.status(500).json({
@@ -194,14 +215,10 @@ async function startServer() {
     }
   });
 
-  app.get('/api/meals-range', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/meals-range', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
       return;
     }
     const startDateKey = typeof req.query?.startDateKey === 'string' ? req.query.startDateKey.trim() : '';
@@ -211,7 +228,9 @@ async function startServer() {
       return;
     }
     try {
-      const meals = await listMealsRangeInSupabase(uid, startDateKey, endDateKey);
+      const meals = useSupabase
+        ? await listMealsRangeInSupabase(uid, startDateKey, endDateKey)
+        : listMealsRangeInMemory(uid, startDateKey, endDateKey);
       res.json({ meals });
     } catch (error) {
       res.status(500).json({
@@ -220,19 +239,17 @@ async function startServer() {
     }
   });
 
-  app.get('/api/meals', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/meals', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
-      return;
-    }
     const dateKey = getLocalDateKey(req.query?.dateKey);
     try {
-      const meals = await listMealsInSupabase(uid, dateKey);
+      const meals = useSupabase
+        ? await listMealsInSupabase(uid, dateKey)
+        : listMealsInMemory(uid, dateKey);
       res.json({ meals });
     } catch (error) {
       res.status(500).json({
@@ -241,35 +258,34 @@ async function startServer() {
     }
   });
 
-  app.post('/api/meals', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/meals', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
       return;
     }
     const allowedMealTypes = new Set<MealType>(['breakfast', 'lunch', 'dinner', 'snack']);
     const rawMealType = req.body?.mealType;
     const mealType: MealType = allowedMealTypes.has(rawMealType) ? rawMealType : 'snack';
     const source: MealSource = req.body?.source === 'image' ? 'image' : 'text';
+    const mealPayload = {
+      id: typeof req.body?.id === 'string' && req.body.id ? req.body.id : `meal_${Date.now()}`,
+      dateKey: getLocalDateKey(req.body?.dateKey),
+      mealType,
+      foods: Array.isArray(req.body?.foods) ? req.body.foods.map(String) : [],
+      portions: typeof req.body?.portions === 'string' ? req.body.portions : '',
+      calories: Number(req.body?.calories ?? 0),
+      protein: Number(req.body?.protein ?? 0),
+      carbs: Number(req.body?.carbs ?? 0),
+      fat: Number(req.body?.fat ?? 0),
+      confidence: Number(req.body?.confidence ?? 0.9),
+      source,
+      sources: Array.isArray(req.body?.sources) ? req.body.sources.map(String) : [],
+    };
     try {
-      const meal = await createMealInSupabase(uid, {
-        id: typeof req.body?.id === 'string' && req.body.id ? req.body.id : `meal_${Date.now()}`,
-        dateKey: getLocalDateKey(req.body?.dateKey),
-        mealType,
-        foods: Array.isArray(req.body?.foods) ? req.body.foods.map(String) : [],
-        portions: typeof req.body?.portions === 'string' ? req.body.portions : '',
-        calories: Number(req.body?.calories ?? 0),
-        protein: Number(req.body?.protein ?? 0),
-        carbs: Number(req.body?.carbs ?? 0),
-        fat: Number(req.body?.fat ?? 0),
-        confidence: Number(req.body?.confidence ?? 0.9),
-        source,
-        sources: Array.isArray(req.body?.sources) ? req.body.sources.map(String) : [],
-      });
+      const meal = useSupabase
+        ? await createMealInSupabase(uid, mealPayload)
+        : createMealInMemory(uid, mealPayload);
       res.status(201).json({ meal });
     } catch (error) {
       res.status(400).json({
@@ -278,29 +294,30 @@ async function startServer() {
     }
   });
 
-  app.patch('/api/meals/:id', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/meals/:id', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
-      return;
-    }
     const allowedMealTypes = new Set<MealType>(['breakfast', 'lunch', 'dinner', 'snack']);
     const rawMealType = req.body?.mealType;
     const mealType: MealType = allowedMealTypes.has(rawMealType) ? rawMealType : 'lunch';
+    const updates = {
+      mealType,
+      foods: Array.isArray(req.body?.foods) ? req.body.foods.map(String) : [],
+      portions: typeof req.body?.portions === 'string' ? req.body.portions : '',
+      calories: Number(req.body?.calories ?? 0),
+      protein: Number(req.body?.protein ?? 0),
+      carbs: Number(req.body?.carbs ?? 0),
+      fat: Number(req.body?.fat ?? 0),
+    };
     try {
-      await updateMealInSupabase(uid, String(req.params.id), {
-        mealType,
-        foods: Array.isArray(req.body?.foods) ? req.body.foods.map(String) : [],
-        portions: typeof req.body?.portions === 'string' ? req.body.portions : '',
-        calories: Number(req.body?.calories ?? 0),
-        protein: Number(req.body?.protein ?? 0),
-        carbs: Number(req.body?.carbs ?? 0),
-        fat: Number(req.body?.fat ?? 0),
-      });
+      if (useSupabase) {
+        await updateMealInSupabase(uid, String(req.params.id), updates);
+      } else {
+        updateMealInMemory(uid, String(req.params.id), updates);
+      }
       res.json({ updated: true });
     } catch (error) {
       res.status(400).json({
@@ -309,18 +326,18 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/meals/:id', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/api/meals/:id', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
-      return;
-    }
     try {
-      await deleteMealInSupabase(uid, String(req.params.id));
+      if (useSupabase) {
+        await deleteMealInSupabase(uid, String(req.params.id));
+      } else {
+        deleteMealInMemory(uid, String(req.params.id));
+      }
       res.json({ deleted: true });
     } catch (error) {
       res.status(500).json({
@@ -329,19 +346,17 @@ async function startServer() {
     }
   });
 
-  app.get('/api/chat-messages', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/chat-messages', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
-      return;
-    }
     const dateKey = getLocalDateKey(req.query?.dateKey);
     try {
-      const messages = await listChatMessagesInSupabase(uid, dateKey);
+      const messages = useSupabase
+        ? await listChatMessagesInSupabase(uid, dateKey)
+        : listChatMessagesInMemory(uid, dateKey);
       res.json({ messages });
     } catch (error) {
       res.status(500).json({
@@ -350,39 +365,38 @@ async function startServer() {
     }
   });
 
-  app.post('/api/chat-messages', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/chat-messages', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
-      return;
-    }
-    try {
-      const message = await saveChatMessageInSupabase(uid, {
-        id: typeof req.body?.id === 'string' && req.body.id ? req.body.id : `msg_${Date.now()}`,
-        dateKey: getLocalDateKey(req.body?.dateKey),
-        role: req.body?.role === 'user' ? 'user' : 'assistant',
-        content: typeof req.body?.content === 'string' ? req.body.content : '...',
-        mealId: typeof req.body?.mealId === 'string' ? req.body.mealId : undefined,
-        confidence: typeof req.body?.confidence === 'number' ? req.body.confidence : undefined,
-        clarificationOptions: Array.isArray(req.body?.clarificationOptions)
-          ? req.body.clarificationOptions.map(String)
+    const chatPayload = {
+      id: typeof req.body?.id === 'string' && req.body.id ? req.body.id : `msg_${Date.now()}`,
+      dateKey: getLocalDateKey(req.body?.dateKey),
+      role: (req.body?.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: typeof req.body?.content === 'string' ? req.body.content : '...',
+      mealId: typeof req.body?.mealId === 'string' ? req.body.mealId : undefined,
+      confidence: typeof req.body?.confidence === 'number' ? req.body.confidence : undefined,
+      clarificationOptions: Array.isArray(req.body?.clarificationOptions)
+        ? req.body.clarificationOptions.map(String)
+        : undefined,
+      sources: Array.isArray(req.body?.sources) ? req.body.sources.map(String) : undefined,
+      nutritionSnapshot:
+        req.body?.nutritionSnapshot && typeof req.body.nutritionSnapshot === 'object'
+          ? {
+              calories: Number(req.body.nutritionSnapshot.calories ?? 0),
+              protein: Number(req.body.nutritionSnapshot.protein ?? 0),
+              carbs: Number(req.body.nutritionSnapshot.carbs ?? 0),
+              fat: Number(req.body.nutritionSnapshot.fat ?? 0),
+            }
           : undefined,
-        sources: Array.isArray(req.body?.sources) ? req.body.sources.map(String) : undefined,
-        nutritionSnapshot:
-          req.body?.nutritionSnapshot && typeof req.body.nutritionSnapshot === 'object'
-            ? {
-                calories: Number(req.body.nutritionSnapshot.calories ?? 0),
-                protein: Number(req.body.nutritionSnapshot.protein ?? 0),
-                carbs: Number(req.body.nutritionSnapshot.carbs ?? 0),
-                fat: Number(req.body.nutritionSnapshot.fat ?? 0),
-              }
-            : undefined,
-        hasImage: Boolean(req.body?.hasImage),
-      });
+      hasImage: Boolean(req.body?.hasImage),
+    };
+    try {
+      const message = useSupabase
+        ? await saveChatMessageInSupabase(uid, chatPayload)
+        : saveChatMessageInMemory(uid, chatPayload);
       res.status(201).json({ message });
     } catch (error) {
       res.status(400).json({
@@ -391,19 +405,19 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/chat-messages', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/api/chat-messages', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
-      return;
-    }
     const dateKey = getLocalDateKey(req.query?.dateKey);
     try {
-      await clearChatMessagesInSupabase(uid, dateKey);
+      if (useSupabase) {
+        await clearChatMessagesInSupabase(uid, dateKey);
+      } else {
+        clearChatMessagesInMemory(uid, dateKey);
+      }
       res.json({ cleared: true });
     } catch (error) {
       res.status(500).json({
@@ -412,14 +426,10 @@ async function startServer() {
     }
   });
 
-  app.get('/api/calories-history', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/calories-history', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    if (!useSupabase) {
-      res.status(501).json({ error: 'Supabase storage is not configured on this server.' });
       return;
     }
 
@@ -436,7 +446,9 @@ async function startServer() {
     }
 
     try {
-      const totalsByDate = await getSevenDayCaloriesInSupabase(uid, dateKeys);
+      const totalsByDate = useSupabase
+        ? await getSevenDayCaloriesInSupabase(uid, dateKeys)
+        : getSevenDayCaloriesInMemory(uid, dateKeys);
       res.json({ totalsByDate });
     } catch (error) {
       res.status(500).json({
@@ -485,8 +497,8 @@ async function startServer() {
     }
   };
 
-  app.post('/api/chat', requireFirebaseJwt, aiRateLimiter, handleChat);
-  app.post('/chat', requireFirebaseJwt, aiRateLimiter, handleChat);
+  app.post('/api/chat', requireSupabaseJwt, aiRateLimiter, handleChat);
+  app.post('/chat', requireSupabaseJwt, aiRateLimiter, handleChat);
 
   const handleAnalyzeImage = async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
@@ -572,14 +584,14 @@ async function startServer() {
 
   app.post(
     '/api/analyze-image',
-    requireFirebaseJwt,
+    requireSupabaseJwt,
     aiRateLimiter,
     upload.single('image'),
     handleAnalyzeImage
   );
   app.post(
     '/analyze-image',
-    requireFirebaseJwt,
+    requireSupabaseJwt,
     aiRateLimiter,
     upload.single('image'),
     handleAnalyzeImage
@@ -596,10 +608,10 @@ async function startServer() {
     res.json(summary);
   };
 
-  app.get('/api/today-summary', requireFirebaseJwt, handleGetSummary);
-  app.get('/today-summary', requireFirebaseJwt, handleGetSummary);
+  app.get('/api/today-summary', requireSupabaseJwt, handleGetSummary);
+  app.get('/today-summary', requireSupabaseJwt, handleGetSummary);
 
-  app.post('/api/today-summary/sync', requireFirebaseJwt, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/today-summary/sync', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser?.uid;
     if (!uid) {
       res.status(401).json({ error: 'Unauthorized' });

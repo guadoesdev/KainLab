@@ -78,8 +78,8 @@ create table if not exists public.daily_summaries (
   primary key (user_id, date_key)
 );
 
--- Enable Row Level Security so anon PostgREST keys cannot read or mutate rows directly.
--- The Render Express server verifies Firebase JWTs and accesses Supabase via SUPABASE_SERVICE_ROLE_KEY.
+-- Enable Row Level Security so anon/publishable PostgREST keys cannot read or mutate rows directly.
+-- The Render Express server verifies Supabase JWTs and accesses Supabase via SUPABASE_SERVICE_ROLE_KEY.
 alter table public.profiles enable row level security;
 alter table public.meals enable row level security;
 alter table public.chat_messages enable row level security;

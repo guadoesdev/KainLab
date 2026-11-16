@@ -1,20 +1,4 @@
-import type { User } from 'firebase/auth';
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-  type Unsubscribe,
-} from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
-import { getStorageProvider } from './storageBackend';
+import type { AppAuthUser } from './supabaseAuth';
 import type {
   ChatMessageItem,
   MealEntry,
@@ -66,7 +50,7 @@ export function getLast7DaysMeta(): DayMeta[] {
 }
 
 export async function fetchSevenDayCalorieHistory(
-  user: User,
+  user: AppAuthUser,
   dateKeys: string[]
 ): Promise<Record<string, number>> {
   const totals: Record<string, number> = {};
@@ -77,92 +61,55 @@ export async function fetchSevenDayCalorieHistory(
     return totals;
   }
 
-  if ((await getStorageProvider()) === 'supabase') {
-    const token = await user.getIdToken();
-    const response = await fetch(
-      `/api/calories-history?dateKeys=${encodeURIComponent(dateKeys.join(','))}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        typeof data?.error === 'string'
-          ? data.error
-          : 'Unable to load 7-day calorie history.'
-      );
+  const token = await user.getAccessToken();
+  const response = await fetch(
+    `/api/calories-history?dateKeys=${encodeURIComponent(dateKeys.join(','))}`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
     }
-    const serverTotals =
-      data?.totalsByDate && typeof data.totalsByDate === 'object'
-        ? (data.totalsByDate as Record<string, unknown>)
-        : {};
-    for (const key of dateKeys) {
-      totals[key] = Math.max(0, Math.round(Number(serverTotals[key] ?? 0)));
-    }
-    return totals;
-  }
-
-  const path = `users/${user.uid}/meals`;
-  const historyQuery = query(
-    collection(db, 'users', user.uid, 'meals'),
-    where('dateKey', 'in', dateKeys.slice(0, 10))
   );
-
-  try {
-    const snapshot = await getDocs(historyQuery);
-    for (const docSnap of snapshot.docs) {
-      const meal = docSnap.data() as Partial<MealEntry>;
-      if (meal.dateKey && meal.dateKey in totals) {
-        totals[meal.dateKey] += Math.max(0, Number(meal.calories) || 0);
-      }
-    }
-    return totals;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      typeof data?.error === 'string'
+        ? data.error
+        : 'Unable to load 7-day calorie history.'
+    );
   }
+  const serverTotals =
+    data?.totalsByDate && typeof data.totalsByDate === 'object'
+      ? (data.totalsByDate as Record<string, unknown>)
+      : {};
+  for (const key of dateKeys) {
+    totals[key] = Math.max(0, Math.round(Number(serverTotals[key] ?? 0)));
+  }
+  return totals;
 }
 
 export async function fetchMealsInDateRange(
-  user: User,
+  user: AppAuthUser,
   startDateKey: string,
   endDateKey: string
 ): Promise<MealEntry[]> {
-  if ((await getStorageProvider()) === 'supabase') {
-    const token = await user.getIdToken();
-    const response = await fetch(
-      `/api/meals-range?startDateKey=${encodeURIComponent(startDateKey)}&endDateKey=${encodeURIComponent(endDateKey)}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        typeof data?.error === 'string' ? data.error : 'Unable to load meal summary range.'
-      );
+  const token = await user.getAccessToken();
+  const response = await fetch(
+    `/api/meals-range?startDateKey=${encodeURIComponent(startDateKey)}&endDateKey=${encodeURIComponent(endDateKey)}`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
     }
-    const rows = Array.isArray(data?.meals) ? data.meals : [];
-    return rows.map((row: MealEntry & { createdAt?: string; updatedAt?: string }) => ({
-      ...row,
-      createdAt: row.createdAt ? new Date(row.createdAt) : new Date(),
-      updatedAt: row.updatedAt ? new Date(row.updatedAt) : new Date(),
-    }));
-  }
-
-  const path = `users/${user.uid}/meals`;
-  const rangeQuery = query(
-    collection(db, 'users', user.uid, 'meals'),
-    where('dateKey', '>=', startDateKey),
-    where('dateKey', '<=', endDateKey)
   );
-
-  try {
-    const snapshot = await getDocs(rangeQuery);
-    return snapshot.docs.map((docSnap) => docSnap.data() as MealEntry);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      typeof data?.error === 'string' ? data.error : 'Unable to load meal summary range.'
+    );
   }
+  const rows = Array.isArray(data?.meals) ? data.meals : [];
+  return rows.map((row: MealEntry & { createdAt?: string; updatedAt?: string }) => ({
+    ...row,
+    createdAt: row.createdAt ? new Date(row.createdAt) : new Date(),
+    updatedAt: row.updatedAt ? new Date(row.updatedAt) : new Date(),
+  }));
 }
 
 export function generateRecordId(prefix: string): string {
@@ -173,11 +120,11 @@ export function generateRecordId(prefix: string): string {
   return `${prefix}_${rand}`;
 }
 
-export async function fetchTodayMealsFromSupabase(
-  user: User,
+export async function fetchTodayMeals(
+  user: AppAuthUser,
   dateKey: string
 ): Promise<MealEntry[]> {
-  const token = await user.getIdToken();
+  const token = await user.getAccessToken();
   const response = await fetch(`/api/meals?dateKey=${encodeURIComponent(dateKey)}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -193,11 +140,11 @@ export async function fetchTodayMealsFromSupabase(
   }));
 }
 
-export async function fetchTodayChatFromSupabase(
-  user: User,
+export async function fetchTodayChat(
+  user: AppAuthUser,
   dateKey: string
 ): Promise<ChatMessageItem[]> {
-  const token = await user.getIdToken();
+  const token = await user.getAccessToken();
   const response = await fetch(`/api/chat-messages?dateKey=${encodeURIComponent(dateKey)}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -212,59 +159,10 @@ export async function fetchTodayChatFromSupabase(
   }));
 }
 
-export function subscribeToTodayMeals(
-  userId: string,
-  dateKey: string,
-  onData: (meals: MealEntry[]) => void
-): Unsubscribe {
-  const path = `users/${userId}/meals`;
-  const mealsQuery = query(
-    collection(db, 'users', userId, 'meals'),
-    where('dateKey', '==', dateKey),
-    orderBy('createdAt', 'asc')
-  );
-
-  return onSnapshot(
-    mealsQuery,
-    (snapshot) => {
-      const items = snapshot.docs.map((docSnap) => docSnap.data() as MealEntry);
-      onData(items);
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
-    }
-  );
-}
-
-export function subscribeToTodayChat(
-  userId: string,
-  dateKey: string,
-  onData: (messages: ChatMessageItem[]) => void
-): Unsubscribe {
-  const path = `users/${userId}/chatMessages`;
-  const chatQuery = query(
-    collection(db, 'users', userId, 'chatMessages'),
-    where('dateKey', '==', dateKey),
-    orderBy('timestamp', 'asc')
-  );
-
-  return onSnapshot(
-    chatQuery,
-    (snapshot) => {
-      const items = snapshot.docs.map((docSnap) => docSnap.data() as ChatMessageItem);
-      onData(items);
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
-    }
-  );
-}
-
-export async function createMealEntryInFirestore(
-  user: User,
+export async function createMealEntry(
+  user: AppAuthUser,
   meal: Omit<MealEntry, 'createdAt' | 'updatedAt'>
 ): Promise<void> {
-  const path = `users/${user.uid}/meals/${meal.id}`;
   const foods = meal.foods
     .map((f) => f.trim().slice(0, 120))
     .filter(Boolean)
@@ -273,69 +171,36 @@ export async function createMealEntryInFirestore(
     throw new Error('Meal must contain at least one food item.');
   }
 
-  if ((await getStorageProvider()) === 'supabase') {
-    const token = await user.getIdToken();
-    const response = await fetch('/api/meals', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        id: meal.id,
-        dateKey: meal.dateKey,
-        mealType: meal.mealType,
-        foods,
-        portions: meal.portions,
-        calories: meal.calories,
-        protein: meal.protein,
-        carbs: meal.carbs,
-        fat: meal.fat,
-        confidence: meal.confidence,
-        source: meal.source,
-        sources: meal.sources || [],
-      }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to save meal.');
-    }
-    return;
-  }
-
-  const payload: Record<string, unknown> = {
-    id: meal.id,
-    userId: user.uid,
-    dateKey: meal.dateKey,
-    mealType: meal.mealType,
-    foods,
-    portions: meal.portions.trim().slice(0, 500) || foods.join(', '),
-    calories: Math.min(10000, Math.max(0, Math.round(meal.calories))),
-    protein: Math.min(1000, Math.max(0, Math.round(meal.protein))),
-    carbs: Math.min(1000, Math.max(0, Math.round(meal.carbs))),
-    fat: Math.min(1000, Math.max(0, Math.round(meal.fat))),
-    confidence: Math.min(1, Math.max(0, Number(meal.confidence.toFixed(2)))),
-    source: meal.source,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
-
-  if (meal.sources && meal.sources.length > 0) {
-    payload.sources = meal.sources
-      .map((s) => s.trim().slice(0, 300))
-      .filter((s) => s.startsWith('http'))
-      .slice(0, 5);
-  }
-
-  try {
-    await setDoc(doc(db, 'users', user.uid, 'meals', meal.id), payload);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+  const token = await user.getAccessToken();
+  const response = await fetch('/api/meals', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      id: meal.id,
+      dateKey: meal.dateKey,
+      mealType: meal.mealType,
+      foods,
+      portions: meal.portions,
+      calories: meal.calories,
+      protein: meal.protein,
+      carbs: meal.carbs,
+      fat: meal.fat,
+      confidence: meal.confidence,
+      source: meal.source,
+      sources: meal.sources || [],
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to save meal.');
   }
 }
 
-export async function updateMealEntryInFirestore(
-  user: User,
+export async function updateMealEntry(
+  user: AppAuthUser,
   mealId: string,
   updates: {
     mealType: MealType;
@@ -347,7 +212,6 @@ export async function updateMealEntryInFirestore(
     fat: number;
   }
 ): Promise<void> {
-  const path = `users/${user.uid}/meals/${mealId}`;
   const foods = updates.foods
     .map((f) => f.trim().slice(0, 120))
     .filter(Boolean)
@@ -356,185 +220,95 @@ export async function updateMealEntryInFirestore(
     throw new Error('Meal must include at least one food item.');
   }
 
-  if ((await getStorageProvider()) === 'supabase') {
-    const token = await user.getIdToken();
-    const response = await fetch(`/api/meals/${encodeURIComponent(mealId)}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        mealType: updates.mealType,
-        foods,
-        portions: updates.portions,
-        calories: updates.calories,
-        protein: updates.protein,
-        carbs: updates.carbs,
-        fat: updates.fat,
-      }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to update meal.');
-    }
-    return;
-  }
-
-  try {
-    await updateDoc(doc(db, 'users', user.uid, 'meals', mealId), {
+  const token = await user.getAccessToken();
+  const response = await fetch(`/api/meals/${encodeURIComponent(mealId)}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
       mealType: updates.mealType,
       foods,
-      portions: updates.portions.trim().slice(0, 500) || foods.join(', '),
-      calories: Math.min(10000, Math.max(0, Math.round(updates.calories))),
-      protein: Math.min(1000, Math.max(0, Math.round(updates.protein))),
-      carbs: Math.min(1000, Math.max(0, Math.round(updates.carbs))),
-      fat: Math.min(1000, Math.max(0, Math.round(updates.fat))),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+      portions: updates.portions,
+      calories: updates.calories,
+      protein: updates.protein,
+      carbs: updates.carbs,
+      fat: updates.fat,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to update meal.');
   }
 }
 
-export async function deleteMealEntryInFirestore(
-  user: User,
+export async function deleteMealEntry(
+  user: AppAuthUser,
   mealId: string
 ): Promise<void> {
-  if ((await getStorageProvider()) === 'supabase') {
-    const token = await user.getIdToken();
-    const response = await fetch(`/api/meals/${encodeURIComponent(mealId)}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to delete meal.');
-    }
-    return;
-  }
-
-  const path = `users/${user.uid}/meals/${mealId}`;
-  try {
-    await deleteDoc(doc(db, 'users', user.uid, 'meals', mealId));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+  const token = await user.getAccessToken();
+  const response = await fetch(`/api/meals/${encodeURIComponent(mealId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to delete meal.');
   }
 }
 
-export async function saveChatMessageInFirestore(
-  user: User,
+export async function saveChatMessage(
+  user: AppAuthUser,
   msg: Omit<ChatMessageItem, 'timestamp' | 'localImagePreview'>
 ): Promise<void> {
-  const path = `users/${user.uid}/chatMessages/${msg.id}`;
-  const payload: Record<string, unknown> = {
-    id: msg.id,
-    userId: user.uid,
-    dateKey: msg.dateKey,
-    role: msg.role,
-    content: msg.content.trim().slice(0, 4000) || '...',
-    timestamp: serverTimestamp(),
-  };
-
-  if (msg.mealId) {
-    payload.mealId = msg.mealId;
-  }
-  if (typeof msg.confidence === 'number') {
-    payload.confidence = Math.min(1, Math.max(0, Number(msg.confidence.toFixed(2))));
-  }
-  if (msg.clarificationOptions && msg.clarificationOptions.length > 0) {
-    payload.clarificationOptions = msg.clarificationOptions
-      .map((opt) => opt.trim().slice(0, 80))
-      .filter(Boolean)
-      .slice(0, 6);
-  }
-  if (msg.sources && msg.sources.length > 0) {
-    payload.sources = msg.sources
-      .map((s) => s.trim().slice(0, 300))
-      .filter((s) => s.startsWith('http'))
-      .slice(0, 5);
-  }
-  if (msg.nutritionSnapshot) {
-    payload.nutritionSnapshot = {
-      calories: Math.min(10000, Math.max(0, Math.round(msg.nutritionSnapshot.calories))),
-      protein: Math.min(1000, Math.max(0, Math.round(msg.nutritionSnapshot.protein))),
-      carbs: Math.min(1000, Math.max(0, Math.round(msg.nutritionSnapshot.carbs))),
-      fat: Math.min(1000, Math.max(0, Math.round(msg.nutritionSnapshot.fat))),
-    };
-  }
-  if (typeof msg.hasImage === 'boolean') {
-    payload.hasImage = msg.hasImage;
-  }
-
-  if ((await getStorageProvider()) === 'supabase') {
-    const token = await user.getIdToken();
-    const response = await fetch('/api/chat-messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(msg),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        typeof data?.error === 'string' ? data.error : 'Unable to save chat message.'
-      );
-    }
-    return;
-  }
-
-  try {
-    await setDoc(doc(db, 'users', user.uid, 'chatMessages', msg.id), payload);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+  const token = await user.getAccessToken();
+  const response = await fetch('/api/chat-messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(msg),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      typeof data?.error === 'string' ? data.error : 'Unable to save chat message.'
+    );
   }
 }
 
-export async function clearChatMessagesInFirestore(
-  user: User,
-  messageIds: string[],
+export async function clearChatMessages(
+  user: AppAuthUser,
   dateKey?: string
 ): Promise<void> {
-  if ((await getStorageProvider()) === 'supabase') {
-    const token = await user.getIdToken();
-    const resolvedDateKey = dateKey || getTodayDateKey();
-    const response = await fetch(
-      `/api/chat-messages?dateKey=${encodeURIComponent(resolvedDateKey)}`,
-      {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      }
+  const token = await user.getAccessToken();
+  const resolvedDateKey = dateKey || getTodayDateKey();
+  const response = await fetch(
+    `/api/chat-messages?dateKey=${encodeURIComponent(resolvedDateKey)}`,
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      typeof data?.error === 'string' ? data.error : 'Unable to clear chat history.'
     );
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        typeof data?.error === 'string' ? data.error : 'Unable to clear chat history.'
-      );
-    }
-    return;
-  }
-
-  for (const id of messageIds) {
-    const path = `users/${user.uid}/chatMessages/${id}`;
-    try {
-      await deleteDoc(doc(db, 'users', user.uid, 'chatMessages', id));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    }
   }
 }
 
 export async function callChatMealApi(
-  user: User,
+  user: AppAuthUser,
   params: {
     message: string;
     history: Array<{ role: 'user' | 'assistant'; content: string }>;
     dateKey: string;
   }
 ): Promise<NutritionAnalysisResponse> {
-  const token = await user.getIdToken();
+  const token = await user.getAccessToken();
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: {
@@ -561,7 +335,7 @@ export async function callChatMealApi(
 }
 
 export async function callAnalyzeImageApi(
-  user: User,
+  user: AppAuthUser,
   params: {
     imageFile: File;
     caption?: string;
@@ -569,7 +343,7 @@ export async function callAnalyzeImageApi(
     dateKey: string;
   }
 ): Promise<NutritionAnalysisResponse> {
-  const token = await user.getIdToken();
+  const token = await user.getAccessToken();
   const formData = new FormData();
   formData.append('image', params.imageFile);
   if (params.caption) {
@@ -599,13 +373,13 @@ export async function callAnalyzeImageApi(
 }
 
 export async function syncSummaryWithBackend(
-  user: User,
+  user: AppAuthUser,
   totals: NutritionTotals,
   dailyCalorieGoal: number,
   dateKey: string
 ): Promise<void> {
   try {
-    const token = await user.getIdToken();
+    const token = await user.getAccessToken();
     await fetch('/api/today-summary/sync', {
       method: 'POST',
       headers: {

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { sendEmailVerification, signOut, type User } from 'firebase/auth';
 import {
   BarChart3,
   CalendarDays,
@@ -8,7 +7,11 @@ import {
   RefreshCw,
   UserCircle2,
 } from 'lucide-react';
-import { auth } from '../firebase';
+import {
+  resendSupabaseVerificationEmail,
+  signOutSupabase,
+  type AppAuthUser,
+} from '../lib/supabaseAuth';
 import {
   DEFAULT_DAILY_CALORIE_GOAL,
   deriveDefaultMacroGoals,
@@ -18,22 +21,19 @@ import {
 import {
   callAnalyzeImageApi,
   callChatMealApi,
-  clearChatMessagesInFirestore,
-  createMealEntryInFirestore,
-  deleteMealEntryInFirestore,
+  clearChatMessages,
+  createMealEntry,
+  deleteMealEntry,
   fetchSevenDayCalorieHistory,
-  fetchTodayChatFromSupabase,
-  fetchTodayMealsFromSupabase,
+  fetchTodayChat,
+  fetchTodayMeals,
   generateRecordId,
   getLast7DaysMeta,
   getTodayDateKey,
-  saveChatMessageInFirestore,
-  subscribeToTodayChat,
-  subscribeToTodayMeals,
+  saveChatMessage,
   syncSummaryWithBackend,
-  updateMealEntryInFirestore,
+  updateMealEntry,
 } from '../lib/nutritionRepository';
-import { getStorageProvider, type StorageProvider } from '../lib/storageBackend';
 import type {
   ChatMessageItem,
   DailyCaloriePoint,
@@ -52,7 +52,7 @@ import { SummaryPage } from './SummaryPage';
 type AppTab = 'today' | 'summary' | 'profile';
 
 interface TodayScreenProps {
-  user: User;
+  user: AppAuthUser;
   profile: UserProfileRecord | null;
   onProfileUpdated: (profile: UserProfileRecord) => void;
   onVerificationRefreshed: () => Promise<void>;
@@ -79,7 +79,6 @@ export function TodayScreen({
   const [isRefreshingVerification, setIsRefreshingVerification] = useState(false);
   const [verificationFeedback, setVerificationFeedback] = useState<string | null>(null);
 
-  const [storageProvider, setStorageProvider] = useState<StorageProvider>('firestore');
   const [historyTotalsByDate, setHistoryTotalsByDate] = useState<Record<string, number>>({});
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -96,53 +95,33 @@ export function TodayScreen({
   const carbsGoal = profile?.carbsGoal ?? localGoals.carbsGoal ?? fallbackMacros.carbsGoal;
   const fatGoal = profile?.fatGoal ?? localGoals.fatGoal ?? fallbackMacros.fatGoal;
 
-  // Subscribe to Firestore or fetch initial Supabase state when user email is verified
+  // Fetch initial meals and chat messages when user email is verified
   useEffect(() => {
     if (!user.emailVerified) {
       return;
     }
 
     let cancelled = false;
-    let unsubMeals: (() => void) | undefined;
-    let unsubChat: (() => void) | undefined;
-
-    getStorageProvider().then(async (provider) => {
-      if (cancelled) return;
-      setStorageProvider(provider);
-
-      if (provider === 'supabase') {
-        try {
-          const [loadedMeals, loadedChat] = await Promise.all([
-            fetchTodayMealsFromSupabase(user, dateKey),
-            fetchTodayChatFromSupabase(user, dateKey),
-          ]);
-          if (!cancelled) {
-            setMeals(loadedMeals);
-            setChatMessages(loadedChat);
-          }
-        } catch (error) {
-          if (!cancelled) {
-            setAiError(
-              error instanceof Error ? error.message : 'Unable to load today nutrition data.'
-            );
-          }
+    Promise.all([
+      fetchTodayMeals(user, dateKey),
+      fetchTodayChat(user, dateKey),
+    ])
+      .then(([loadedMeals, loadedChat]) => {
+        if (!cancelled) {
+          setMeals(loadedMeals);
+          setChatMessages(loadedChat);
         }
-        return;
-      }
-
-      unsubMeals = subscribeToTodayMeals(user.uid, dateKey, (nextMeals) => {
-        setMeals(nextMeals);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAiError(
+            error instanceof Error ? error.message : 'Unable to load today nutrition data.'
+          );
+        }
       });
-
-      unsubChat = subscribeToTodayChat(user.uid, dateKey, (nextMessages) => {
-        setChatMessages(nextMessages);
-      });
-    });
 
     return () => {
       cancelled = true;
-      unsubMeals?.();
-      unsubChat?.();
     };
   }, [user, user.uid, user.emailVerified, dateKey]);
 
@@ -228,13 +207,9 @@ export function TodayScreen({
         updatedAt: new Date(),
       };
 
+      setMeals((prev) => [...prev, newMeal]);
       if (user.emailVerified) {
-        if (storageProvider === 'supabase') {
-          setMeals((prev) => [...prev, newMeal]);
-        }
-        await createMealEntryInFirestore(user, newMeal);
-      } else {
-        setMeals((prev) => [...prev, newMeal]);
+        await createMealEntry(user, newMeal);
       }
     }
 
@@ -252,13 +227,9 @@ export function TodayScreen({
       timestamp: new Date(),
     };
 
+    setChatMessages((prev) => [...prev, assistantMsg]);
     if (user.emailVerified) {
-      if (storageProvider === 'supabase') {
-        setChatMessages((prev) => [...prev, assistantMsg]);
-      }
-      await saveChatMessageInFirestore(user, assistantMsg);
-    } else {
-      setChatMessages((prev) => [...prev, assistantMsg]);
+      await saveChatMessage(user, assistantMsg);
     }
 
     return loggedMealId;
@@ -280,13 +251,9 @@ export function TodayScreen({
       timestamp: new Date(),
     };
 
+    setChatMessages((prev) => [...prev, userMsg]);
     if (user.emailVerified) {
-      if (storageProvider === 'supabase') {
-        setChatMessages((prev) => [...prev, userMsg]);
-      }
-      await saveChatMessageInFirestore(user, userMsg);
-    } else {
-      setChatMessages((prev) => [...prev, userMsg]);
+      await saveChatMessage(user, userMsg);
     }
 
     setIsSendingAi(true);
@@ -324,13 +291,9 @@ export function TodayScreen({
       timestamp: new Date(),
     };
 
+    setChatMessages((prev) => [...prev, userMsg]);
     if (user.emailVerified) {
-      if (storageProvider === 'supabase') {
-        setChatMessages((prev) => [...prev, userMsg]);
-      }
-      await saveChatMessageInFirestore(user, userMsg);
-    } else {
-      setChatMessages((prev) => [...prev, userMsg]);
+      await saveChatMessage(user, userMsg);
     }
 
     setIsSendingAi(true);
@@ -370,7 +333,7 @@ export function TodayScreen({
 
     if (user.emailVerified) {
       try {
-        await updateMealEntryInFirestore(user, mealId, updates);
+        await updateMealEntry(user, mealId, updates);
       } catch (error) {
         setMeals(previousMeals);
         throw error;
@@ -384,7 +347,7 @@ export function TodayScreen({
 
     if (user.emailVerified) {
       try {
-        await deleteMealEntryInFirestore(user, mealId);
+        await deleteMealEntry(user, mealId);
       } catch (error) {
         setMeals(previousMeals);
         throw error;
@@ -404,34 +367,27 @@ export function TodayScreen({
   }
 
   async function handleClearChat() {
+    setChatMessages([]);
     if (user.emailVerified) {
-      if (storageProvider === 'supabase') {
-        setChatMessages([]);
-      }
-      await clearChatMessagesInFirestore(
-        user,
-        chatMessages.map((m) => m.id),
-        dateKey
-      );
-    } else {
-      setChatMessages([]);
+      await clearChatMessages(user, dateKey);
     }
   }
 
   async function handleSignOut() {
     setIsSigningOut(true);
     try {
-      await signOut(auth);
+      await signOutSupabase();
     } finally {
       setIsSigningOut(false);
     }
   }
 
   async function handleResendVerification() {
+    if (!user.email) return;
     setVerificationFeedback(null);
     setIsSendingVerification(true);
     try {
-      await sendEmailVerification(user);
+      await resendSupabaseVerificationEmail(user.email);
       setVerificationFeedback(`Verification link sent to ${user.email}.`);
     } catch (error) {
       setVerificationFeedback(

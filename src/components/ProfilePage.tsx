@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { User } from 'firebase/auth';
+import type { AppAuthUser } from '../lib/supabaseAuth';
 import { CheckCircle2, Loader2, Save } from 'lucide-react';
 import {
   DEFAULT_DAILY_CALORIE_GOAL,
@@ -9,7 +9,7 @@ import {
 } from '../lib/profileService';
 
 interface ProfilePageProps {
-  user: User;
+  user: AppAuthUser;
   profile: UserProfileRecord | null;
   localGoals: {
     dailyCalorieGoal: number;

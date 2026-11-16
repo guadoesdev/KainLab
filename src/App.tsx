@@ -4,9 +4,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, type User } from 'firebase/auth';
 import { Loader2 } from 'lucide-react';
-import { auth } from './firebase';
+import {
+  refreshSupabaseUserSession,
+  subscribeToSupabaseAuth,
+  type AppAuthUser,
+} from './lib/supabaseAuth';
 import { loadOrSyncVerifiedProfile, type UserProfileRecord } from './lib/profileService';
 import { AuthShowcasePanel } from './components/AuthShowcasePanel';
 import { AuthFormPanel } from './components/AuthFormPanel';
@@ -15,14 +18,17 @@ import type { RegistrationNotice } from './components/VerificationBanner';
 
 export default function App() {
   const [authReady, setAuthReady] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
+  const [supabaseConfigured, setSupabaseConfigured] = useState(true);
+  const [user, setUser] = useState<AppAuthUser | null>(null);
   const [profile, setProfile] = useState<UserProfileRecord | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [initialAuthError, setInitialAuthError] = useState<string | null>(null);
+  const [passwordRecoveryActive, setPasswordRecoveryActive] = useState(false);
   const [registrationNotice, setRegistrationNotice] = useState<RegistrationNotice | null>(null);
   const pendingUsernameRef = useRef<string | undefined>(undefined);
   const isRegisteringRef = useRef(false);
 
-  const syncUserProfile = useCallback(async (currentUser: User) => {
+  const syncUserProfile = useCallback(async (currentUser: AppAuthUser) => {
     if (!currentUser.emailVerified) {
       setProfile(null);
       return;
@@ -44,31 +50,40 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
-      if (isRegisteringRef.current) {
-        return;
-      }
-      setUser(nextUser);
-      setAuthReady(true);
-      if (nextUser) {
-        setRegistrationNotice(null);
-        await syncUserProfile(nextUser);
-      } else {
-        setProfile(null);
-        setSyncError(null);
-      }
+    const unsubscribe = subscribeToSupabaseAuth({
+      onConfigStatus: (configured) => {
+        setSupabaseConfigured(configured);
+      },
+      onAuthError: (message) => {
+        setInitialAuthError(message);
+      },
+      onSessionChange: async (nextUser, event) => {
+        if (isRegisteringRef.current) {
+          return;
+        }
+        if (event === 'PASSWORD_RECOVERY') {
+          setPasswordRecoveryActive(true);
+        } else if (event === 'SIGNED_OUT') {
+          setPasswordRecoveryActive(false);
+        }
+
+        setUser(nextUser);
+        setAuthReady(true);
+        if (nextUser) {
+          setRegistrationNotice(null);
+          await syncUserProfile(nextUser);
+        } else {
+          setProfile(null);
+          setSyncError(null);
+        }
+      },
     });
     return () => unsubscribe();
   }, [syncUserProfile]);
 
-  const [, setVerificationTick] = useState(0);
-
   async function handleRefreshVerification() {
-    if (!auth.currentUser) return;
-    await auth.currentUser.reload();
-    const refreshedUser = auth.currentUser;
+    const refreshedUser = await refreshSupabaseUserSession();
     setUser(refreshedUser);
-    setVerificationTick((tick) => tick + 1);
     if (refreshedUser?.emailVerified) {
       await syncUserProfile(refreshedUser);
     }
@@ -85,7 +100,7 @@ export default function App() {
     );
   }
 
-  if (user) {
+  if (user && !passwordRecoveryActive) {
     return (
       <>
         {syncError && (
@@ -110,6 +125,17 @@ export default function App() {
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-12 items-stretch bg-white">
       <AuthShowcasePanel />
       <AuthFormPanel
+        supabaseConfigured={supabaseConfigured}
+        initialAuthError={initialAuthError}
+        passwordRecoveryActive={passwordRecoveryActive}
+        onPasswordRecoveryComplete={async () => {
+          setPasswordRecoveryActive(false);
+          const refreshed = await refreshSupabaseUserSession();
+          setUser(refreshed);
+          if (refreshed) {
+            await syncUserProfile(refreshed);
+          }
+        }}
         registrationNotice={registrationNotice}
         onDismissRegistrationNotice={() => setRegistrationNotice(null)}
         onRegistrationStarted={(username) => {
@@ -120,6 +146,11 @@ export default function App() {
           isRegisteringRef.current = false;
           setUser(null);
           setRegistrationNotice(notice);
+        }}
+        onRegistrationAutoSignedIn={async (signedInUser) => {
+          isRegisteringRef.current = false;
+          setUser(signedInUser);
+          await syncUserProfile(signedInUser);
         }}
         onRegistrationFailed={() => {
           isRegisteringRef.current = false;

@@ -1,4 +1,10 @@
-import type { Timestamp } from 'firebase/firestore';
+export type TimestampLike =
+  | Date
+  | string
+  | {
+      toDate?: () => Date;
+      seconds?: number;
+    };
 
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 export type MealSource = 'text' | 'image';
@@ -24,8 +30,8 @@ export interface MealEntry {
   confidence: number;
   source: MealSource;
   sources?: string[];
-  createdAt?: Timestamp | Date;
-  updatedAt?: Timestamp | Date;
+  createdAt?: TimestampLike;
+  updatedAt?: TimestampLike;
 }
 
 export interface ChatMessageItem {
@@ -41,7 +47,7 @@ export interface ChatMessageItem {
   nutritionSnapshot?: NutritionTotals;
   hasImage?: boolean;
   localImagePreview?: string;
-  timestamp?: Timestamp | Date;
+  timestamp?: TimestampLike;
 }
 
 export interface NutritionAnalysisResponse {

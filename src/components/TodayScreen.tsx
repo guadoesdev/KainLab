@@ -468,7 +468,7 @@ export function TodayScreen({
       <header className="sticky top-0 z-30 h-12 sm:h-14 border-b border-slate-200 bg-white/95 backdrop-blur-md">
         <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-8">
           <h1 className="font-display text-base sm:text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0">
-            AI Nutrition Tracker
+            KainLab
           </h1>
 
           <nav aria-label="Primary navigation" className="hidden sm:flex items-center gap-6">

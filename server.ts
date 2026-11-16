@@ -635,7 +635,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`AI Nutrition Tracker server running on http://0.0.0.0:${PORT}`);
+    console.log(`KainLab server running on http://0.0.0.0:${PORT}`);
   });
 }
 

@@ -299,7 +299,7 @@ export function AuthFormPanel({
           href="/"
           className="lg:hidden font-display text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
         >
-          AI Nutrition Tracker
+          KainLab
         </a>
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <span>Today Workspace</span>
@@ -800,7 +800,7 @@ export function AuthFormPanel({
       </div>
 
       <footer className="text-xs text-slate-500 flex items-center justify-between gap-4 border-t border-slate-100 pt-4">
-        <span>AI Nutrition Tracker</span>
+        <span>KainLab</span>
         <span>Email, Password &amp; Google Sign-In</span>
       </footer>
     </main>

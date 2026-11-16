@@ -33,7 +33,7 @@ export function AuthShowcasePanel() {
           href="/"
           className="inline-block font-display text-xl font-bold tracking-tight text-white whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 rounded-sm"
         >
-          AI Nutrition Tracker
+          KainLab
         </a>
       </div>
 
@@ -73,7 +73,7 @@ export function AuthShowcasePanel() {
       </div>
 
       <div className="relative z-10 flex items-center justify-between gap-4 text-xs text-slate-400">
-        <span>AI Nutrition Tracker</span>
+        <span>KainLab</span>
         <span aria-hidden="true">·</span>
         <span>USDA &amp; Public Nutrition Grounding</span>
       </div>

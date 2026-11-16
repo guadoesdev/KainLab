@@ -105,8 +105,8 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
   private readonly model: string;
   private readonly ai: GoogleGenAI;
 
-  constructor(apiKey: string, model = process.env.GEMINI_MODEL || 'gemini-4-hydrogen') {
-    this.model = model;
+  constructor(apiKey: string, model = process.env.GEMINI_MODEL?.trim() || 'gemini-4-hydrogen') {
+    this.model = model.trim() || 'gemini-4-hydrogen';
     this.ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
@@ -133,7 +133,9 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         tools: [{ googleSearch: {} }],
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        ...(/^gemini-[34]/i.test(this.model)
+          ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+          : {}),
       },
     });
 
@@ -171,7 +173,9 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         tools: [{ googleSearch: {} }],
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        ...(/^gemini-[34]/i.test(this.model)
+          ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+          : {}),
       },
     });
 

@@ -3,12 +3,19 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import fs from 'fs';
 import path from 'path';
 
-const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
-  projectId: string;
-};
+function resolveFirebaseProjectId(): string {
+  const envProjectId = process.env.FIREBASE_PROJECT_ID?.trim();
+  if (envProjectId) {
+    return envProjectId;
+  }
+  const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+  const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as {
+    projectId: string;
+  };
+  return firebaseConfig.projectId;
+}
 
-const FIREBASE_PROJECT_ID = firebaseConfig.projectId;
+const FIREBASE_PROJECT_ID = resolveFirebaseProjectId();
 const FIREBASE_JWKS = createRemoteJWKSet(
   new URL(
     'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com'

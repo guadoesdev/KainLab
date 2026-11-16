@@ -13,6 +13,8 @@ import {
   clearChatMessagesInFirestore,
   createMealEntryInFirestore,
   deleteMealEntryInFirestore,
+  fetchTodayChatFromSupabase,
+  fetchTodayMealsFromSupabase,
   generateRecordId,
   getTodayDateKey,
   saveChatMessageInFirestore,
@@ -21,6 +23,7 @@ import {
   syncSummaryWithBackend,
   updateMealEntryInFirestore,
 } from '../lib/nutritionRepository';
+import { getStorageProvider, type StorageProvider } from '../lib/storageBackend';
 import type {
   ChatMessageItem,
   MealEntry,
@@ -56,27 +59,59 @@ export function TodayScreen({
   const [isRefreshingVerification, setIsRefreshingVerification] = useState(false);
   const [verificationFeedback, setVerificationFeedback] = useState<string | null>(null);
 
+  const [storageProvider, setStorageProvider] = useState<StorageProvider>('firestore');
+
   const dailyCalorieGoal = profile?.dailyCalorieGoal ?? localCalorieGoal;
 
-  // Subscribe to real-time Firestore meals & chat messages when user email is verified
+  // Subscribe to Firestore or fetch initial Supabase state when user email is verified
   useEffect(() => {
     if (!user.emailVerified) {
       return;
     }
 
-    const unsubMeals = subscribeToTodayMeals(user.uid, dateKey, (nextMeals) => {
-      setMeals(nextMeals);
-    });
+    let cancelled = false;
+    let unsubMeals: (() => void) | undefined;
+    let unsubChat: (() => void) | undefined;
 
-    const unsubChat = subscribeToTodayChat(user.uid, dateKey, (nextMessages) => {
-      setChatMessages(nextMessages);
+    getStorageProvider().then(async (provider) => {
+      if (cancelled) return;
+      setStorageProvider(provider);
+
+      if (provider === 'supabase') {
+        try {
+          const [loadedMeals, loadedChat] = await Promise.all([
+            fetchTodayMealsFromSupabase(user, dateKey),
+            fetchTodayChatFromSupabase(user, dateKey),
+          ]);
+          if (!cancelled) {
+            setMeals(loadedMeals);
+            setChatMessages(loadedChat);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setAiError(
+              error instanceof Error ? error.message : 'Unable to load today nutrition data.'
+            );
+          }
+        }
+        return;
+      }
+
+      unsubMeals = subscribeToTodayMeals(user.uid, dateKey, (nextMeals) => {
+        setMeals(nextMeals);
+      });
+
+      unsubChat = subscribeToTodayChat(user.uid, dateKey, (nextMessages) => {
+        setChatMessages(nextMessages);
+      });
     });
 
     return () => {
-      unsubMeals();
-      unsubChat();
+      cancelled = true;
+      unsubMeals?.();
+      unsubChat?.();
     };
-  }, [user.uid, user.emailVerified, dateKey]);
+  }, [user, user.uid, user.emailVerified, dateKey]);
 
   const dailyTotals: NutritionTotals = useMemo(() => {
     return meals.reduce<NutritionTotals>(
@@ -121,6 +156,9 @@ export function TodayScreen({
       };
 
       if (user.emailVerified) {
+        if (storageProvider === 'supabase') {
+          setMeals((prev) => [...prev, newMeal]);
+        }
         await createMealEntryInFirestore(user, newMeal);
       } else {
         setMeals((prev) => [...prev, newMeal]);
@@ -142,6 +180,9 @@ export function TodayScreen({
     };
 
     if (user.emailVerified) {
+      if (storageProvider === 'supabase') {
+        setChatMessages((prev) => [...prev, assistantMsg]);
+      }
       await saveChatMessageInFirestore(user, assistantMsg);
     } else {
       setChatMessages((prev) => [...prev, assistantMsg]);
@@ -167,6 +208,9 @@ export function TodayScreen({
     };
 
     if (user.emailVerified) {
+      if (storageProvider === 'supabase') {
+        setChatMessages((prev) => [...prev, userMsg]);
+      }
       await saveChatMessageInFirestore(user, userMsg);
     } else {
       setChatMessages((prev) => [...prev, userMsg]);
@@ -208,6 +252,9 @@ export function TodayScreen({
     };
 
     if (user.emailVerified) {
+      if (storageProvider === 'supabase') {
+        setChatMessages((prev) => [...prev, userMsg]);
+      }
       await saveChatMessageInFirestore(user, userMsg);
     } else {
       setChatMessages((prev) => [...prev, userMsg]);
@@ -285,9 +332,13 @@ export function TodayScreen({
 
   async function handleClearChat() {
     if (user.emailVerified) {
+      if (storageProvider === 'supabase') {
+        setChatMessages([]);
+      }
       await clearChatMessagesInFirestore(
         user,
-        chatMessages.map((m) => m.id)
+        chatMessages.map((m) => m.id),
+        dateKey
       );
     } else {
       setChatMessages([]);

@@ -13,6 +13,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
+import { getStorageProvider } from './storageBackend';
 import type {
   ChatMessageItem,
   MealEntry,
@@ -35,6 +36,45 @@ export function generateRecordId(prefix: string): string {
       ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
       : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   return `${prefix}_${rand}`;
+}
+
+export async function fetchTodayMealsFromSupabase(
+  user: User,
+  dateKey: string
+): Promise<MealEntry[]> {
+  const token = await user.getIdToken();
+  const response = await fetch(`/api/meals?dateKey=${encodeURIComponent(dateKey)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to load meals.');
+  }
+  const rows = Array.isArray(data?.meals) ? data.meals : [];
+  return rows.map((row: MealEntry & { createdAt?: string; updatedAt?: string }) => ({
+    ...row,
+    createdAt: row.createdAt ? new Date(row.createdAt) : new Date(),
+    updatedAt: row.updatedAt ? new Date(row.updatedAt) : new Date(),
+  }));
+}
+
+export async function fetchTodayChatFromSupabase(
+  user: User,
+  dateKey: string
+): Promise<ChatMessageItem[]> {
+  const token = await user.getIdToken();
+  const response = await fetch(`/api/chat-messages?dateKey=${encodeURIComponent(dateKey)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to load chat history.');
+  }
+  const rows = Array.isArray(data?.messages) ? data.messages : [];
+  return rows.map((row: ChatMessageItem & { timestamp?: string }) => ({
+    ...row,
+    timestamp: row.timestamp ? new Date(row.timestamp) : new Date(),
+  }));
 }
 
 export function subscribeToTodayMeals(
@@ -98,6 +138,36 @@ export async function createMealEntryInFirestore(
     throw new Error('Meal must contain at least one food item.');
   }
 
+  if ((await getStorageProvider()) === 'supabase') {
+    const token = await user.getIdToken();
+    const response = await fetch('/api/meals', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        id: meal.id,
+        dateKey: meal.dateKey,
+        mealType: meal.mealType,
+        foods,
+        portions: meal.portions,
+        calories: meal.calories,
+        protein: meal.protein,
+        carbs: meal.carbs,
+        fat: meal.fat,
+        confidence: meal.confidence,
+        source: meal.source,
+        sources: meal.sources || [],
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to save meal.');
+    }
+    return;
+  }
+
   const payload: Record<string, unknown> = {
     id: meal.id,
     userId: user.uid,
@@ -151,6 +221,31 @@ export async function updateMealEntryInFirestore(
     throw new Error('Meal must include at least one food item.');
   }
 
+  if ((await getStorageProvider()) === 'supabase') {
+    const token = await user.getIdToken();
+    const response = await fetch(`/api/meals/${encodeURIComponent(mealId)}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        mealType: updates.mealType,
+        foods,
+        portions: updates.portions,
+        calories: updates.calories,
+        protein: updates.protein,
+        carbs: updates.carbs,
+        fat: updates.fat,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to update meal.');
+    }
+    return;
+  }
+
   try {
     await updateDoc(doc(db, 'users', user.uid, 'meals', mealId), {
       mealType: updates.mealType,
@@ -171,6 +266,19 @@ export async function deleteMealEntryInFirestore(
   user: User,
   mealId: string
 ): Promise<void> {
+  if ((await getStorageProvider()) === 'supabase') {
+    const token = await user.getIdToken();
+    const response = await fetch(`/api/meals/${encodeURIComponent(mealId)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(typeof data?.error === 'string' ? data.error : 'Unable to delete meal.');
+    }
+    return;
+  }
+
   const path = `users/${user.uid}/meals/${mealId}`;
   try {
     await deleteDoc(doc(db, 'users', user.uid, 'meals', mealId));
@@ -223,6 +331,25 @@ export async function saveChatMessageInFirestore(
     payload.hasImage = msg.hasImage;
   }
 
+  if ((await getStorageProvider()) === 'supabase') {
+    const token = await user.getIdToken();
+    const response = await fetch('/api/chat-messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(msg),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof data?.error === 'string' ? data.error : 'Unable to save chat message.'
+      );
+    }
+    return;
+  }
+
   try {
     await setDoc(doc(db, 'users', user.uid, 'chatMessages', msg.id), payload);
   } catch (error) {
@@ -232,8 +359,28 @@ export async function saveChatMessageInFirestore(
 
 export async function clearChatMessagesInFirestore(
   user: User,
-  messageIds: string[]
+  messageIds: string[],
+  dateKey?: string
 ): Promise<void> {
+  if ((await getStorageProvider()) === 'supabase') {
+    const token = await user.getIdToken();
+    const resolvedDateKey = dateKey || getTodayDateKey();
+    const response = await fetch(
+      `/api/chat-messages?dateKey=${encodeURIComponent(resolvedDateKey)}`,
+      {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof data?.error === 'string' ? data.error : 'Unable to clear chat history.'
+      );
+    }
+    return;
+  }
+
   for (const id of messageIds) {
     const path = `users/${user.uid}/chatMessages/${id}`;
     try {

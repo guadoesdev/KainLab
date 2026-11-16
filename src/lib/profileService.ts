@@ -12,6 +12,7 @@ import {
   normalizeUsername,
   rememberUsernameEmailMapping,
 } from './authHelpers';
+import { getStorageProvider } from './storageBackend';
 
 export const DEFAULT_DAILY_CALORIE_GOAL = 2000;
 
@@ -67,6 +68,39 @@ export async function loadOrSyncVerifiedProfile(
 ): Promise<UserProfileRecord | null> {
   if (!user.emailVerified) {
     return null;
+  }
+
+  const providerMode = await getStorageProvider();
+  if (providerMode === 'supabase') {
+    const token = await user.getIdToken();
+    const isGoogle = user.providerData.some((p) => p.providerId === 'google.com');
+    const response = await fetch('/api/profile/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        email: user.email || '',
+        displayName: user.displayName || undefined,
+        photoURL: user.photoURL || undefined,
+        provider: isGoogle ? 'google.com' : 'password',
+        preferredUsername,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof data?.error === 'string' ? data.error : 'Unable to sync account profile.'
+      );
+    }
+
+    const profile = data as UserProfileRecord;
+    if (user.email && profile.username) {
+      rememberUsernameEmailMapping(profile.username, user.email);
+    }
+    return profile;
   }
 
   const userPath = `users/${user.uid}`;
@@ -181,6 +215,27 @@ export async function updateDailyCalorieGoal(
   nextGoal: number
 ): Promise<number> {
   const clamped = Math.min(10000, Math.max(800, Math.round(nextGoal)));
+  const providerMode = await getStorageProvider();
+
+  if (providerMode === 'supabase') {
+    const token = await user.getIdToken();
+    const response = await fetch('/api/profile/goal', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ dailyCalorieGoal: clamped }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        typeof data?.error === 'string' ? data.error : 'Unable to update calorie goal.'
+      );
+    }
+    return Number(data?.dailyCalorieGoal ?? clamped);
+  }
+
   const userPath = `users/${user.uid}`;
   const userRef = doc(db, 'users', user.uid);
   const batch = writeBatch(db);

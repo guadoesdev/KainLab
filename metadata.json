@@ -2,5 +2,7 @@
   "name": "Kestrel Access",
   "description": "Sample authentication portal with username and password login, Google Sign-In, and account registration.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

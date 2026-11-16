@@ -55,10 +55,10 @@ export interface SupabaseChatMessageRecord {
 let cachedClient: SupabaseClient | null = null;
 
 export function isSupabaseConfigured(): boolean {
-  if (process.env.DATABASE_PROVIDER === 'firestore') {
+  if (process.env.DATABASE_PROVIDER === 'memory') {
     return false;
   }
-  const url = process.env.SUPABASE_URL?.trim();
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   return Boolean(
     url &&
@@ -72,7 +72,7 @@ function getSupabaseClient(): SupabaseClient {
   if (cachedClient) {
     return cachedClient;
   }
-  const url = process.env.SUPABASE_URL?.trim();
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key) {
     throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured.');

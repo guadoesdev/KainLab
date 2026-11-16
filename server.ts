@@ -128,7 +128,7 @@ async function startServer() {
   });
 
   app.get('/api/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', service: 'ai-nutrition-tracker', timestamp: new Date().toISOString() });
+    res.json({ status: 'ok', service: 'kainlab', timestamp: new Date().toISOString() });
   });
 
   app.get('/api/config/auth', (_req: Request, res: Response) => {

@@ -1,7 +1,9 @@
 {
-  "name": "Kestrel Access",
+  "name": "KainLab",
   "description": "Sample authentication portal with username and password login, Google Sign-In, and account registration.",
-  "requestFramePermissions": ["camera"],
+  "requestFramePermissions": [
+    "camera"
+  ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

@@ -55,16 +55,16 @@ export interface SupabaseChatMessageRecord {
 let cachedClient: SupabaseClient | null = null;
 
 export function isSupabaseConfigured(): boolean {
-  if (process.env.DATABASE_PROVIDER === 'memory') {
+  if (process.env.DATABASE_PROVIDER === 'firestore') {
     return false;
   }
-  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim();
+  const url = process.env.SUPABASE_URL?.trim();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   return Boolean(
     url &&
-      key &&
-      !url.includes('your-project-ref') &&
-      key !== 'MY_SUPABASE_SERVICE_ROLE_KEY'
+    key &&
+    !url.includes('your-project-ref') &&
+    key !== 'MY_SUPABASE_SERVICE_ROLE_KEY'
   );
 }
 
@@ -72,7 +72,7 @@ function getSupabaseClient(): SupabaseClient {
   if (cachedClient) {
     return cachedClient;
   }
-  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim();
+  const url = process.env.SUPABASE_URL?.trim();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key) {
     throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured.');
@@ -217,6 +217,7 @@ export async function syncProfileInSupabase(params: {
   preferredUsername?: string;
 }): Promise<SupabaseProfileRecord> {
   const supabase = getSupabaseClient();
+  console.log('Looking up profile for uid:', params.uid);
   const { data: existing, error: fetchError } = await supabase
     .from('profiles')
     .select(
@@ -224,6 +225,9 @@ export async function syncProfileInSupabase(params: {
     )
     .eq('uid', params.uid)
     .maybeSingle();
+
+  console.log('Existing profile:', existing);
+  console.log('Fetch error:', fetchError);
 
   if (fetchError) {
     throw new Error(`Failed to load profile from Supabase: ${fetchError.message}`);
@@ -265,6 +269,13 @@ export async function syncProfileInSupabase(params: {
   const displayName = (params.displayName || candidateUsername).trim().slice(0, 80);
   const provider: 'google.com' | 'password' =
     params.provider === 'google.com' ? 'google.com' : 'password';
+
+  console.log('Creating profile with:', {
+    uid: params.uid,
+    email: params.email,
+    username: candidateUsername,
+    displayName,
+  });
 
   const { data: inserted, error: insertError } = await supabase
     .from('profiles')
@@ -593,24 +604,24 @@ export async function saveChatMessageInSupabase(
     clarification_options:
       msg.clarificationOptions && msg.clarificationOptions.length > 0
         ? msg.clarificationOptions
-            .map((opt) => opt.trim().slice(0, 80))
-            .filter(Boolean)
-            .slice(0, 6)
+          .map((opt) => opt.trim().slice(0, 80))
+          .filter(Boolean)
+          .slice(0, 6)
         : null,
     sources:
       msg.sources && msg.sources.length > 0
         ? msg.sources
-            .map((s) => s.trim().slice(0, 300))
-            .filter((s) => s.startsWith('http'))
-            .slice(0, 5)
+          .map((s) => s.trim().slice(0, 300))
+          .filter((s) => s.startsWith('http'))
+          .slice(0, 5)
         : null,
     nutrition_snapshot: msg.nutritionSnapshot
       ? {
-          calories: Math.min(10000, Math.max(0, Math.round(msg.nutritionSnapshot.calories))),
-          protein: Math.min(1000, Math.max(0, Math.round(msg.nutritionSnapshot.protein))),
-          carbs: Math.min(1000, Math.max(0, Math.round(msg.nutritionSnapshot.carbs))),
-          fat: Math.min(1000, Math.max(0, Math.round(msg.nutritionSnapshot.fat))),
-        }
+        calories: Math.min(10000, Math.max(0, Math.round(msg.nutritionSnapshot.calories))),
+        protein: Math.min(1000, Math.max(0, Math.round(msg.nutritionSnapshot.protein))),
+        carbs: Math.min(1000, Math.max(0, Math.round(msg.nutritionSnapshot.carbs))),
+        fat: Math.min(1000, Math.max(0, Math.round(msg.nutritionSnapshot.fat))),
+      }
       : null,
     has_image: Boolean(msg.hasImage),
     created_at: nowIso,

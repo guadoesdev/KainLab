@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
+  Apple,
   Camera,
   CheckCircle2,
+  Coffee,
   ExternalLink,
   HelpCircle,
   ImagePlus,
   Loader2,
   Send,
   Trash2,
+  Utensils,
   X,
 } from 'lucide-react';
 import type { ChatMessageItem } from '../types/nutrition';
@@ -97,6 +100,7 @@ export function NutritionChatPanel({
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [photoReadError, setPhotoReadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textInputRef = useRef<HTMLInputElement | null>(null);
   const scrollBottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -142,6 +146,18 @@ export function NutritionChatPanel({
     if (!trimmed) return;
     setInputText('');
     await onSendText(trimmed);
+  }
+
+  function handlePrefillMealPrompt(mealLabel: string, sentencePrefix: string) {
+    const nextValue = pendingPhoto ? mealLabel : sentencePrefix;
+    setInputText(nextValue);
+    requestAnimationFrame(() => {
+      const el = textInputRef.current;
+      if (!el) return;
+      el.focus();
+      const len = nextValue.length;
+      el.setSelectionRange(len, len);
+    });
   }
 
   const lastMessageId = messages[messages.length - 1]?.id;
@@ -376,6 +392,75 @@ export function NutritionChatPanel({
           </div>
         )}
 
+        <div
+          role="group"
+          aria-label="Quick-start actions"
+          className="flex items-center gap-1.5 overflow-x-auto pb-0.5"
+        >
+          <button
+            type="button"
+            disabled={isSending}
+            onClick={() => handlePrefillMealPrompt('Breakfast', 'For breakfast I had ')}
+            className="min-h-[44px] sm:min-h-[36px] inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-emerald-600 hover:bg-emerald-50/70 hover:text-emerald-900 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+          >
+            <Coffee className="h-3.5 w-3.5 text-emerald-700 shrink-0" aria-hidden="true" />
+            <span>Log breakfast</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isSending}
+            onClick={() => handlePrefillMealPrompt('Lunch', 'For lunch I had ')}
+            className="min-h-[44px] sm:min-h-[36px] inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-emerald-600 hover:bg-emerald-50/70 hover:text-emerald-900 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+          >
+            <Utensils className="h-3.5 w-3.5 text-emerald-700 shrink-0" aria-hidden="true" />
+            <span>Log lunch</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isSending}
+            onClick={() => handlePrefillMealPrompt('Dinner', 'For dinner I had ')}
+            className="min-h-[44px] sm:min-h-[36px] inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-emerald-600 hover:bg-emerald-50/70 hover:text-emerald-900 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+          >
+            <Utensils className="h-3.5 w-3.5 text-emerald-700 shrink-0" aria-hidden="true" />
+            <span>Log dinner</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isSending}
+            onClick={() => handlePrefillMealPrompt('Snack', 'For a snack I had ')}
+            className="min-h-[44px] sm:min-h-[36px] inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-emerald-600 hover:bg-emerald-50/70 hover:text-emerald-900 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+          >
+            <Apple className="h-3.5 w-3.5 text-emerald-700 shrink-0" aria-hidden="true" />
+            <span>Log snack</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isSending}
+            onClick={() => {
+              setPhotoReadError(null);
+              setIsCameraOpen(true);
+            }}
+            className="min-h-[44px] sm:min-h-[36px] inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-emerald-600 hover:bg-emerald-50/70 hover:text-emerald-900 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+          >
+            <Camera className="h-3.5 w-3.5 text-emerald-700 shrink-0" aria-hidden="true" />
+            <span>Analyze photo</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isSending}
+            onClick={() => fileInputRef.current?.click()}
+            className="min-h-[44px] sm:min-h-[36px] inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-emerald-600 hover:bg-emerald-50/70 hover:text-emerald-900 transition-colors disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+          >
+            <ImagePlus className="h-3.5 w-3.5 text-emerald-700 shrink-0" aria-hidden="true" />
+            <span>Upload image</span>
+          </button>
+        </div>
+
         <div className="flex items-center gap-2">
           <input
             ref={fileInputRef}
@@ -411,6 +496,7 @@ export function NutritionChatPanel({
           </button>
 
           <input
+            ref={textInputRef}
             type="text"
             value={inputText}
             disabled={isSending}

@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AppAuthUser } from '../lib/supabaseAuth';
 import {
   AlertCircle,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   RefreshCw,
 } from 'lucide-react';
+import { buildDailySummaryCsv, downloadCsvFile } from '../lib/csvExport';
 import {
   fetchMealsInDateRange,
   formatDateKey,
@@ -73,6 +76,7 @@ export function SummaryPage({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hoveredDayKey, setHoveredDayKey] = useState<string | null>(null);
+  const [justDownloaded, setJustDownloaded] = useState(false);
 
   const todayKey = getTodayDateKey();
 
@@ -196,6 +200,14 @@ export function SummaryPage({
     void loadRange();
   }, [loadRange]);
 
+  useEffect(() => {
+    if (!justDownloaded) return;
+    const timer = window.setTimeout(() => {
+      setJustDownloaded(false);
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [justDownloaded]);
+
   // Keep today's entries synchronized immediately with live Today meals state
   const effectiveMeals = useMemo(() => {
     const includesToday = todayKey >= startDateKey && todayKey <= endDateKey;
@@ -301,6 +313,35 @@ export function SummaryPage({
     dayBuckets.find((b) => b.dateKey === todayKey) ??
     dayBuckets[dayBuckets.length - 1];
 
+  const handleDownloadCsv = useCallback(() => {
+    if (isLoading || dayBuckets.length === 0) return;
+    const csv = buildDailySummaryCsv(
+      dayBuckets,
+      {
+        dailyCalorieGoal,
+        proteinGoal,
+        carbsGoal,
+        fatGoal,
+      },
+      MEAL_TYPE_LABELS
+    );
+    const filename =
+      startDateKey === endDateKey
+        ? `kainlab-daily-summary-${startDateKey}.csv`
+        : `kainlab-daily-summary-${startDateKey}_to_${endDateKey}.csv`;
+    downloadCsvFile(filename, csv);
+    setJustDownloaded(true);
+  }, [
+    isLoading,
+    dayBuckets,
+    dailyCalorieGoal,
+    proteinGoal,
+    carbsGoal,
+    fatGoal,
+    startDateKey,
+    endDateKey,
+  ]);
+
   return (
     <div className="space-y-6">
       {/* Period Switcher & Date Navigation */}
@@ -315,30 +356,56 @@ export function SummaryPage({
             </p>
           </div>
 
-          <div
-            role="tablist"
-            aria-label="Summary period"
-            className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-xl self-start sm:self-auto"
-          >
-            {(['day', 'week', 'month'] as SummaryPeriod[]).map((tab) => {
-              const isActive = period === tab;
-              return (
-                <button
-                  key={tab}
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => setPeriod(tab)}
-                  className={`min-h-[38px] px-4 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors whitespace-nowrap shrink-0 ${
-                    isActive
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {tab}
-                </button>
-              );
-            })}
+          <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+            <div
+              role="tablist"
+              aria-label="Summary period"
+              className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-xl"
+            >
+              {(['day', 'week', 'month'] as SummaryPeriod[]).map((tab) => {
+                const isActive = period === tab;
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => setPeriod(tab)}
+                    className={`min-h-[38px] px-4 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors whitespace-nowrap shrink-0 ${
+                      isActive
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleDownloadCsv}
+              disabled={isLoading || dayBuckets.length === 0}
+              aria-label={`Download ${period} nutrition summary as CSV`}
+              className={`min-h-[44px] sm:min-h-[40px] px-3.5 py-2 inline-flex items-center gap-1.5 rounded-xl border text-xs font-medium transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 ${
+                justDownloaded
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              {justDownloaded ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                  <span>Exported CSV</span>
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Download CSV</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
 

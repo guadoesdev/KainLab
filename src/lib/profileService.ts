@@ -60,7 +60,7 @@ export async function loadOrSyncVerifiedProfile(
       displayName: user.displayName || undefined,
       photoURL: user.photoURL || undefined,
       provider: user.providerId,
-      preferredUsername,
+      preferredUsername: preferredUsername || user.username || undefined,
     }),
   });
 

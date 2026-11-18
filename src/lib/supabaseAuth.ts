@@ -9,6 +9,7 @@ import {
 export interface AppAuthUser {
   uid: string;
   email: string | null;
+  username?: string | null;
   displayName: string | null;
   photoURL: string | null;
   emailVerified: boolean;
@@ -127,9 +128,15 @@ export function mapSupabaseUser(
     (Array.isArray(user.identities) &&
       user.identities.some((identity) => identity.provider === 'google'));
 
+  const username =
+    typeof meta.username === 'string' && meta.username.trim()
+      ? meta.username.trim()
+      : null;
+
   return {
     uid: user.id,
     email: user.email ?? null,
+    username,
     displayName,
     photoURL,
     emailVerified: Boolean(user.email_confirmed_at || user.confirmed_at),

@@ -6,10 +6,14 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  Info,
   Loader2,
 } from 'lucide-react';
 import {
+  checkAccountExistence,
   evaluatePasswordStrength,
+  isAlreadyExistsAuthError,
+  isInvalidCredentialsAuthError,
   loadRememberedLogin,
   mapSupabaseAuthError,
   normalizeUsername,
@@ -124,6 +128,11 @@ export function AuthFormPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(initialAuthError);
+  const [redirectNotice, setRedirectNotice] = useState<{
+    tone: 'amber' | 'blue';
+    title: string;
+    message: string;
+  } | null>(null);
   const [needsProviderSetup, setNeedsProviderSetup] = useState(false);
 
   const passwordStrength = evaluatePasswordStrength(
@@ -134,6 +143,7 @@ export function AuthFormPanel({
     if (passwordRecoveryActive) {
       setMode('recovery');
       setErrorMessage(null);
+      setRedirectNotice(null);
     }
   }, [passwordRecoveryActive]);
 
@@ -146,8 +156,47 @@ export function AuthFormPanel({
   function switchMode(nextMode: AuthMode) {
     setMode(nextMode);
     setErrorMessage(null);
+    setRedirectNotice(null);
     setNeedsProviderSetup(false);
     setResetSent(false);
+  }
+
+  function redirectToCreateAccount(identifier: string, message: string) {
+    const trimmed = identifier.trim();
+    if (trimmed.includes('@')) {
+      setSignupEmail(trimmed);
+      setSignupUsername('');
+    } else if (trimmed) {
+      setSignupUsername(normalizeUsername(trimmed));
+      setSignupEmail('');
+    }
+    setLoginPassword('');
+    setErrorMessage(null);
+    setNeedsProviderSetup(false);
+    setRedirectNotice({
+      tone: 'amber',
+      title: 'No existing profile found',
+      message,
+    });
+    setMode('signup');
+  }
+
+  function redirectToSignIn(identifier: string, message: string) {
+    const trimmed = identifier.trim();
+    if (trimmed) {
+      setLoginIdentifier(trimmed);
+    }
+    setLoginPassword('');
+    setSignupPassword('');
+    setSignupConfirmPassword('');
+    setErrorMessage(null);
+    setNeedsProviderSetup(false);
+    setRedirectNotice({
+      tone: 'blue',
+      title: 'Profile already exists',
+      message,
+    });
+    setMode('signin');
   }
 
   async function handleGoogleAuth() {
@@ -167,6 +216,7 @@ export function AuthFormPanel({
   async function handleSignInSubmit(event: FormEvent) {
     event.preventDefault();
     setErrorMessage(null);
+    setRedirectNotice(null);
     setNeedsProviderSetup(false);
 
     const identifier = loginIdentifier.trim();
@@ -181,9 +231,24 @@ export function AuthFormPanel({
 
     const resolvedEmail = resolveLoginIdentifierToEmail(identifier);
     if (!resolvedEmail) {
-      setErrorMessage(
-        'That username is not cached on this device yet. Sign in with your email address once to link it, or create a new account.'
-      );
+      setIsSubmitting(true);
+      try {
+        const accountCheck = await checkAccountExistence({ identifier });
+        if (accountCheck.checked && !accountCheck.exists) {
+          redirectToCreateAccount(
+            identifier,
+            `We couldn't find an existing KainLab profile for "${identifier}". Please create an account below to get started.`
+          );
+          return;
+        }
+        setErrorMessage(
+          accountCheck.checked && accountCheck.exists
+            ? 'A profile exists for that username, but it is not cached on this device yet. Sign in with your email address once to link it.'
+            : 'That username is not cached on this device yet. Sign in with your email address once to link it, or create a new account.'
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
@@ -201,6 +266,16 @@ export function AuthFormPanel({
         rememberUsernameEmailMapping(signedInUser.displayName, resolvedEmail);
       }
     } catch (error) {
+      if (isInvalidCredentialsAuthError(error)) {
+        const accountCheck = await checkAccountExistence({ identifier: resolvedEmail });
+        if (accountCheck.checked && !accountCheck.exists) {
+          redirectToCreateAccount(
+            identifier,
+            `We couldn't find an existing KainLab profile for "${identifier}". Please create an account below to get started.`
+          );
+          return;
+        }
+      }
       const mapped = mapSupabaseAuthError(error);
       setErrorMessage(mapped.message);
       setNeedsProviderSetup(mapped.needsProviderSetup);
@@ -212,6 +287,7 @@ export function AuthFormPanel({
   async function handleSignUpSubmit(event: FormEvent) {
     event.preventDefault();
     setErrorMessage(null);
+    setRedirectNotice(null);
     setNeedsProviderSetup(false);
 
     const usernameErr = validateUsername(signupUsername);
@@ -250,6 +326,29 @@ export function AuthFormPanel({
     setIsSubmitting(true);
     onRegistrationStarted(cleanUsername);
     try {
+      const existingCheck = await checkAccountExistence({
+        email: cleanEmail,
+        username: cleanUsername,
+      });
+
+      if (existingCheck.checked && existingCheck.emailExists) {
+        onRegistrationFailed();
+        redirectToSignIn(
+          cleanEmail,
+          `You already have an existing KainLab profile for ${cleanEmail}. Please sign in below.`
+        );
+        return;
+      }
+
+      if (existingCheck.checked && existingCheck.usernameExists) {
+        onRegistrationFailed();
+        redirectToSignIn(
+          cleanUsername,
+          `A KainLab profile with username "${cleanUsername}" already exists. Sign in below if this is your account, or return to Create account to choose another username.`
+        );
+        return;
+      }
+
       const result = await signUpWithSupabasePassword({
         email: cleanEmail,
         password: signupPassword,
@@ -259,7 +358,10 @@ export function AuthFormPanel({
 
       if (result.alreadyExistsHint) {
         onRegistrationFailed();
-        setErrorMessage('An account with this email address already exists. Try signing in instead.');
+        redirectToSignIn(
+          cleanEmail,
+          `You already have an existing KainLab profile for ${cleanEmail}. Please sign in below.`
+        );
         return;
       }
 
@@ -291,6 +393,13 @@ export function AuthFormPanel({
       });
     } catch (error) {
       onRegistrationFailed();
+      if (isAlreadyExistsAuthError(error)) {
+        redirectToSignIn(
+          cleanEmail,
+          `You already have an existing KainLab profile for ${cleanEmail}. Please sign in below.`
+        );
+        return;
+      }
       const mapped = mapSupabaseAuthError(error);
       setErrorMessage(mapped.message);
       setNeedsProviderSetup(mapped.needsProviderSetup);
@@ -494,6 +603,31 @@ export function AuthFormPanel({
                   </>
                 )}
               </header>
+
+              {redirectNotice && (
+                <div
+                  role="status"
+                  className={`mb-5 rounded-lg border p-3.5 text-sm space-y-1 ${
+                    redirectNotice.tone === 'amber'
+                      ? 'border-amber-200 bg-amber-50 text-amber-950'
+                      : 'border-blue-200 bg-blue-50 text-blue-950'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    {redirectNotice.tone === 'amber' ? (
+                      <AlertCircle className="h-4 w-4 text-amber-700 mt-0.5 shrink-0" aria-hidden="true" />
+                    ) : (
+                      <Info className="h-4 w-4 text-blue-700 mt-0.5 shrink-0" aria-hidden="true" />
+                    )}
+                    <div>
+                      <p className="font-medium">{redirectNotice.title}</p>
+                      <p className="text-xs mt-0.5 leading-relaxed opacity-90">
+                        {redirectNotice.message}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {errorMessage && (
                 <div

@@ -7,7 +7,6 @@ import { GeminiNutritionProvider } from './server/ai/geminiNutritionProvider.ts'
 import { NutritionService } from './server/services/nutritionService.ts';
 import { InMemoryDailyLedgerRepository, type MealRepository } from './server/repositories/mealRepository.ts';
 import {
-  checkProfileExistsInSupabase,
   clearChatMessagesInSupabase,
   createMealInSupabase,
   deleteMealInSupabase,
@@ -139,37 +138,8 @@ async function startServer() {
     });
   });
 
-  const authCheckRateLimiter = createAiRateLimiter({
-    windowMs: 60 * 1000,
-    maxRequests: 30,
-  });
-
   app.get('/api/config/storage', (_req: Request, res: Response) => {
     res.json({ provider: useSupabase ? 'supabase' : 'memory' });
-  });
-
-  app.post('/api/auth/check-account', authCheckRateLimiter, async (req: Request, res: Response) => {
-    if (!useSupabase) {
-      res.json({
-        checked: false,
-        exists: false,
-        emailExists: false,
-        usernameExists: false,
-      });
-      return;
-    }
-    try {
-      const result = await checkProfileExistsInSupabase({
-        identifier: typeof req.body?.identifier === 'string' ? req.body.identifier : undefined,
-        email: typeof req.body?.email === 'string' ? req.body.email : undefined,
-        username: typeof req.body?.username === 'string' ? req.body.username : undefined,
-      });
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Unable to verify account status.',
-      });
-    }
   });
 
   app.post('/api/profile/sync', requireSupabaseJwt, async (req: AuthenticatedRequest, res: Response) => {

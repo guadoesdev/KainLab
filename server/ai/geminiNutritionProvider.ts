@@ -92,6 +92,9 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
       .filter(Boolean);
     this.models = [...new Set([primaryModel, ...fallbackModels])];
     this.useGoogleSearch = process.env.GEMINI_USE_SEARCH === 'true';
+    console.info(
+      `[Gemini] Google Search grounding is ${this.useGoogleSearch ? 'enabled' : 'disabled'} (GEMINI_USE_SEARCH=${JSON.stringify(process.env.GEMINI_USE_SEARCH ?? '')}).`
+    );
     this.ai = new GoogleGenAI({
       apiKey,
       httpOptions: {

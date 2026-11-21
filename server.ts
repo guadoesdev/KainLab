@@ -81,8 +81,7 @@ function getNutritionService(): NutritionService {
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured in server environment.');
   }
-  const model = process.env.GEMINI_MODEL?.trim() || undefined;
-  const provider = new GeminiNutritionProvider(apiKey, model);
+  const provider = new GeminiNutritionProvider(apiKey);
   return new NutritionService(provider);
 }
 

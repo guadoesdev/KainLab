@@ -1,10 +1,11 @@
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { ApiError, GoogleGenAI, ThinkingLevel } from '@google/genai';
+import type { GenerateContentParameters } from '@google/genai';
 import type {
   ImageMealAnalysisInput,
   NutritionAIProvider,
   TextMealAnalysisInput,
 } from './provider.ts';
-import type { ChatHistoryTurn, MealAnalysisRaw, MealType } from '../types/nutrition.ts';
+import type { MealAnalysisRaw, MealType } from '../types/nutrition.ts';
 
 const SYSTEM_INSTRUCTION = `You are a nutrition analysis assistant. Analyze meal text or food photos, using reliable nutrition knowledge and available references (prefer USDA FoodData Central) when helpful. Output ONLY one JSON object matching this exact shape (no markdown commentary outside JSON):
 {
@@ -77,26 +78,24 @@ function extractGroundingUrls(
   return urls;
 }
 
-function formatHistoryContext(history: ChatHistoryTurn[]): string {
-  if (!history.length) return 'No prior turns in this conversation.';
-  return history
-    .slice(-6)
-    .map((turn) => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`)
-    .join('\n');
-}
-
 export class GeminiNutritionProvider implements NutritionAIProvider {
   public readonly providerName = 'gemini';
-  private readonly model: string;
+  private readonly models: string[];
   private readonly useGoogleSearch: boolean;
   private readonly ai: GoogleGenAI;
 
-  constructor(apiKey: string, model = process.env.GEMINI_MODEL?.trim() || 'gemini-4-hydrogen') {
-    this.model = model.trim() || 'gemini-4-hydrogen';
-    this.useGoogleSearch = process.env.GEMINI_USE_SEARCH?.trim().toLowerCase() !== 'false';
+  constructor(apiKey: string) {
+    const primaryModel = process.env.GEMINI_MODEL?.trim() || 'gemini-4-hydrogen';
+    const fallbackModels = (process.env.GEMINI_FALLBACK_MODELS || '')
+      .split(',')
+      .map((model) => model.trim())
+      .filter(Boolean);
+    this.models = [...new Set([primaryModel, ...fallbackModels])];
+    this.useGoogleSearch = process.env.GEMINI_USE_SEARCH === 'true';
     this.ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
+        timeout: 30_000,
         headers: {
           'User-Agent': 'aistudio-build',
         },
@@ -104,29 +103,66 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
     });
   }
 
+  private async generate(
+    contents: GenerateContentParameters['contents'],
+    modelOverride?: string
+  ) {
+    const override = modelOverride?.trim();
+    const models = override
+      ? [...new Set([override, ...this.models])]
+      : this.models;
+    let lastError: unknown;
+
+    for (const model of models) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          console.info(`[Gemini] Requesting model "${model}" (attempt ${attempt + 1}/2).`);
+          const response = await this.ai.models.generateContent({
+            model,
+            contents,
+            config: {
+              systemInstruction: SYSTEM_INSTRUCTION,
+              ...(this.useGoogleSearch ? { tools: [{ googleSearch: {} }] } : {}),
+              ...(/^gemini-[34]/.test(model)
+                ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+                : {}),
+            },
+          });
+          console.info(`[Gemini] Model "${model}" completed the request.`);
+          return response;
+        } catch (error) {
+          if (!(error instanceof ApiError)) {
+            throw error;
+          }
+
+          lastError = error;
+          console.warn(`[Gemini] Model "${model}" returned HTTP ${error.status}.`);
+          if (error.status === 429) {
+            break;
+          }
+          if (![500, 503, 504].includes(error.status)) {
+            throw error;
+          }
+          if (attempt === 1) {
+            break;
+          }
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
   async analyzeTextMeal(input: TextMealAnalysisInput): Promise<MealAnalysisRaw> {
     const prompt = [
       `Current local timestamp: ${input.currentTimeIso}`,
-      //'Recent conversation context:',
-      //formatHistoryContext(input.history),
-      //'',
       `Latest user message: "${input.message}"`,
       this.useGoogleSearch
         ? 'Use Google Search to check USDA FoodData Central / trusted nutrition figures when helpful, then respond with JSON only.'
         : 'Use your nutrition knowledge and respond with JSON only.',
     ].join('\n');
 
-    const response = await this.ai.models.generateContent({
-      model: this.model,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        ...(this.useGoogleSearch ? { tools: [{ googleSearch: {} }] } : {}),
-        ...(/^gemini-[34]/i.test(this.model)
-          ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-          : {}),
-      },
-    });
+    const response = await this.generate(prompt, input.model);
 
     const parsed = extractJsonObject(response.text ?? '');
     const sources = extractGroundingUrls(
@@ -138,8 +174,6 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
   async analyzeFoodImage(input: ImageMealAnalysisInput): Promise<MealAnalysisRaw> {
     const prompt = [
       `Current local timestamp: ${input.currentTimeIso}`,
-      //  'Recent conversation context:',
-      //  formatHistoryContext(input.history),
       input.caption
         ? `User note with photo: "${input.caption}"`
         : 'User uploaded a food photo for meal logging.',
@@ -148,9 +182,8 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
         : 'Identify the foods visible in the image, estimate realistic portions, and return JSON only.',
     ].join('\n');
 
-    const response = await this.ai.models.generateContent({
-      model: this.model,
-      contents: {
+    const response = await this.generate(
+      {
         parts: [
           {
             inlineData: {
@@ -161,14 +194,8 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
           { text: prompt },
         ],
       },
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        ...(this.useGoogleSearch ? { tools: [{ googleSearch: {} }] } : {}),
-        ...(/^gemini-[34]/i.test(this.model)
-          ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-          : {}),
-      },
-    });
+      input.model
+    );
 
     const parsed = extractJsonObject(response.text ?? '');
     const sources = extractGroundingUrls(

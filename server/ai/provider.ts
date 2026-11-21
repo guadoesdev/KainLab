@@ -4,6 +4,7 @@ export interface TextMealAnalysisInput {
   message: string;
   history: ChatHistoryTurn[];
   currentTimeIso: string;
+  model?: string;
 }
 
 export interface ImageMealAnalysisInput {
@@ -12,6 +13,7 @@ export interface ImageMealAnalysisInput {
   caption?: string;
   history: ChatHistoryTurn[];
   currentTimeIso: string;
+  model?: string;
 }
 
 export interface NutritionAIProvider {

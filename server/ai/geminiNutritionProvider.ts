@@ -105,9 +105,9 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
   async analyzeTextMeal(input: TextMealAnalysisInput): Promise<MealAnalysisRaw> {
     const prompt = [
       `Current local timestamp: ${input.currentTimeIso}`,
-      'Recent conversation context:',
-      formatHistoryContext(input.history),
-      '',
+      //'Recent conversation context:',
+      //formatHistoryContext(input.history),
+      //'',
       `Latest user message: "${input.message}"`,
       'Use Google Search to check USDA FoodData Central / trusted nutrition figures when helpful, then respond with JSON only.',
     ].join('\n');
@@ -134,8 +134,8 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
   async analyzeFoodImage(input: ImageMealAnalysisInput): Promise<MealAnalysisRaw> {
     const prompt = [
       `Current local timestamp: ${input.currentTimeIso}`,
-      'Recent conversation context:',
-      formatHistoryContext(input.history),
+      //  'Recent conversation context:',
+      //  formatHistoryContext(input.history),
       input.caption
         ? `User note with photo: "${input.caption}"`
         : 'User uploaded a food photo for meal logging.',

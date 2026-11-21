@@ -6,7 +6,7 @@ import type {
 } from './provider.ts';
 import type { ChatHistoryTurn, MealAnalysisRaw, MealType } from '../types/nutrition.ts';
 
-const SYSTEM_INSTRUCTION = `You are a nutrition analysis assistant. Analyze meal text or food photos, using Google Search (prefer USDA FoodData Central) when helpful. Output ONLY one JSON object matching this exact shape (no markdown commentary outside JSON):
+const SYSTEM_INSTRUCTION = `You are a nutrition analysis assistant. Analyze meal text or food photos, using reliable nutrition knowledge and available references (prefer USDA FoodData Central) when helpful. Output ONLY one JSON object matching this exact shape (no markdown commentary outside JSON):
 {
   "foods": ["string"],
   "portions": "string",
@@ -88,10 +88,12 @@ function formatHistoryContext(history: ChatHistoryTurn[]): string {
 export class GeminiNutritionProvider implements NutritionAIProvider {
   public readonly providerName = 'gemini';
   private readonly model: string;
+  private readonly useGoogleSearch: boolean;
   private readonly ai: GoogleGenAI;
 
   constructor(apiKey: string, model = process.env.GEMINI_MODEL?.trim() || 'gemini-4-hydrogen') {
     this.model = model.trim() || 'gemini-4-hydrogen';
+    this.useGoogleSearch = process.env.GEMINI_USE_SEARCH?.trim().toLowerCase() !== 'false';
     this.ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
@@ -109,7 +111,9 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
       //formatHistoryContext(input.history),
       //'',
       `Latest user message: "${input.message}"`,
-      'Use Google Search to check USDA FoodData Central / trusted nutrition figures when helpful, then respond with JSON only.',
+      this.useGoogleSearch
+        ? 'Use Google Search to check USDA FoodData Central / trusted nutrition figures when helpful, then respond with JSON only.'
+        : 'Use your nutrition knowledge and respond with JSON only.',
     ].join('\n');
 
     const response = await this.ai.models.generateContent({
@@ -117,7 +121,7 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        tools: [{ googleSearch: {} }],
+        ...(this.useGoogleSearch ? { tools: [{ googleSearch: {} }] } : {}),
         ...(/^gemini-[34]/i.test(this.model)
           ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
           : {}),
@@ -139,7 +143,9 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
       input.caption
         ? `User note with photo: "${input.caption}"`
         : 'User uploaded a food photo for meal logging.',
-      'Identify the foods visible in the image, estimate realistic portions, research USDA FoodData Central / trusted nutrition data via Google Search if needed, and return JSON only.',
+      this.useGoogleSearch
+        ? 'Identify the foods visible in the image, estimate realistic portions, research USDA FoodData Central / trusted nutrition data via Google Search if needed, and return JSON only.'
+        : 'Identify the foods visible in the image, estimate realistic portions, and return JSON only.',
     ].join('\n');
 
     const response = await this.ai.models.generateContent({
@@ -157,7 +163,7 @@ export class GeminiNutritionProvider implements NutritionAIProvider {
       },
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        tools: [{ googleSearch: {} }],
+        ...(this.useGoogleSearch ? { tools: [{ googleSearch: {} }] } : {}),
         ...(/^gemini-[34]/i.test(this.model)
           ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
           : {}),

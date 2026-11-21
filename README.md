@@ -8,7 +8,7 @@ KainLab is a full-stack conversational nutrition and food-photo tracking applica
 - **Backend**: Node.js (`22.14.0`), Express (`server.ts`) serving both API routes (`/api/*`) and the Vite SPA
 - **Authentication**: Supabase Auth (Email/Password, email verification, password recovery, and Google OAuth)
 - **Database**: Supabase PostgreSQL (`public.profiles`, `public.meals`, `public.chat_messages`, `public.daily_summaries`) with Row Level Security enabled
-- **AI Layer**: `@google/genai` server-side (`GEMINI_MODEL`, defaulting to `gemini-4-hydrogen`) with Google Search grounding
+- **AI Layer**: `@google/genai` server-side (`GEMINI_MODEL`, defaulting to `gemini-4-hydrogen`) with optional Google Search grounding (`GEMINI_USE_SEARCH`, defaulting to `true`)
 
 ---
 
@@ -142,6 +142,7 @@ Before deploying to Render, you can run KainLab locally to verify Supabase Auth,
    ```env
    GEMINI_API_KEY="your_gemini_api_key"
    GEMINI_MODEL="gemini-4-hydrogen"
+   GEMINI_USE_SEARCH="true"
    APP_URL="http://localhost:3000"
    DATABASE_PROVIDER="supabase"
    SUPABASE_URL="https://<your-project-ref>.supabase.co"
@@ -206,6 +207,7 @@ If you prefer creating the service manually instead of using a Blueprint:
 | `DATABASE_PROVIDER` | Yes | Set to `supabase` |
 | `GEMINI_API_KEY` | Yes | Server-side Gemini API key |
 | `GEMINI_MODEL` | Recommended | Gemini model ID (default: `gemini-4-hydrogen`) |
+| `GEMINI_USE_SEARCH` | No | Enable Google Search grounding for text and image analysis (`true`/`false`; default: `true`) |
 | `SUPABASE_URL` | Yes | Supabase Project URL (`https://<ref>.supabase.co`) |
 | `SUPABASE_PUBLISHABLE_KEY` | Yes | Client-safe Supabase publishable (or anon) key for Auth |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server-only Supabase service role key for PostgreSQL persistence |
